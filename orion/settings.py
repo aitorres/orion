@@ -175,5 +175,17 @@ if not DEBUG:
 LOGIN_URL = "/"
 
 # PDS variables
-PDS_HOSTNAME: Final[str] = os.environ["ORION_PDS_HOSTNAME"]
-PDS_ADMIN_PASSWORD: Final[str] = os.environ["ORION_PDS_ADMIN_PASSWORD"]
+_pds_hostname = os.environ.get("ORION_PDS_HOSTNAME") or (
+    "https://localhost" if DEBUG else None
+)
+_pds_admin_password = os.environ.get("ORION_PDS_ADMIN_PASSWORD") or (
+    "admin" if DEBUG else None
+)
+
+if _pds_hostname is None or _pds_admin_password is None:
+    raise RuntimeError(
+        "ORION_PDS_HOSTNAME and ORION_PDS_ADMIN_PASSWORD must be set in production."
+    )
+
+PDS_HOSTNAME: Final[str] = _pds_hostname
+PDS_ADMIN_PASSWORD: Final[str] = _pds_admin_password
