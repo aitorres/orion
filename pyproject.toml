@@ -1,0 +1,69 @@
+[project]
+name = "orion"
+version = "0.1.0"
+description = "A lightweight, web interface for PDS administration, built in Python using Django."
+authors = [
+    { name = "Andrés Ignacio Torres", email = "dev@aitorres.com" },
+]
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "django>=6.0.2",
+    "gunicorn>=25.0.1",
+    "requests>=2.32.5",
+    "whitenoise>=6.11.0",
+]
+
+[dependency-groups]
+dev = [
+    "black>=26.1.0",
+    "django-stubs>=5.2.9",
+    "flake8>=7.3.0",
+    "isort>=7.0.0",
+    "mypy>=1.19.1",
+    "pre-commit>=4.5.1",
+    "pylint>=4.0.4",
+    "pylint-django>=2.7.0",
+    "types-requests>=2.32.4.20260107",
+]
+
+[tool.mypy]
+allow_redefinition = false
+disallow_subclassing_any = true
+ignore_missing_imports = true
+follow_imports = "skip"
+no_implicit_optional = true
+no_implicit_reexport = true
+strict_optional = true
+strict_equality = true
+warn_no_return = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unused_ignores = true
+warn_unreachable = true
+plugins = "mypy_django_plugin.main"
+
+[[tool.mypy.overrides]]
+module = "*.migrations.*"
+ignore_errors = true
+
+[tool.pylint.MASTER]
+ignore = "migrations"
+load-plugins = "pylint_django"
+django-settings-module = "orion.settings"
+disable = "C0114, C0103, C0115, R0914" # missing-module-docstring
+
+[tool.pylint.FORMAT]
+max-line-length=90
+
+[tool.django-stubs]
+django_settings_module = "orion.settings"
+
+[tool.black]
+line-length = 90
+target-version = ["py314"]
+
+[tool.isort]
+profile = "black"
+line_length = 90
+skip = ["web/migrations"]
