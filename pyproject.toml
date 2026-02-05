@@ -54,16 +54,16 @@ django-settings-module = "orion.settings"
 disable = "C0114, C0103, C0115, R0914" # missing-module-docstring
 
 [tool.pylint.FORMAT]
-max-line-length=90
+max-line-length=95
 
 [tool.django-stubs]
 django_settings_module = "orion.settings"
 
 [tool.black]
-line-length = 90
+line-length = 95
 target-version = ["py314"]
 
 [tool.isort]
 profile = "black"
-line_length = 90
+line_length = 95
 skip = ["web/migrations"]

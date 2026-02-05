@@ -1,0 +1,60 @@
+{% extends "_base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<article>
+    <header>
+        <h1>Welcome to Orion!</h1>
+    </header>
+    <p>This dashboard provides an overview of the PDS and lets you take administrative actions</p>
+    <button onclick="location.href='{% url 'logout' %}'">Log out</button>
+    <footer>
+        <p>Beware! Actions may be irreversible.</p>
+    </footer>
+</article>
+
+<article>
+    <header>
+        <h2>Service health</h2>
+    </header>
+    {% if is_service_healthy %}
+        <p>All systems are operational.</p>
+    {% else %}
+        <p>PDS is experiencing issues!</p>
+    {% endif %}
+</article>
+<article>
+    <header>
+        <h2>Accounts</h2>
+    </header>
+    {% if accounts %}
+        <p>There are {{ accounts|length }} accounts (repos) in the PDS.</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Handle</th>
+                    <th>DID</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for account in accounts %}
+                <tr>
+                    <td>{{ account.handle }}</td>
+                    <td>{{ account.did }}</td>
+                    <td>
+                        {% if account.active %}
+                            Active
+                        {% else %}
+                            {{ account.status.title }}
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No accounts found!</p>
+    {% endif %}
+</article>
+{% endblock %}

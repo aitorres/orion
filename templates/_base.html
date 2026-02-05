@@ -8,16 +8,17 @@
 
         <!-- Styles -->
         <link
-        rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.indigo.min.css"
-        />
-        <link rel="stylesheet" href="{% static 'css/styles.css' %}" />
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.indigo.min.css"
+            >
 
-        {% block css%} {% endblock %}
+        {% block css %} {% endblock %}
     </head>
     <body>
-        <header>Orion</header>
-        <main>
+        <main class="content container">
+            <header>
+                <h1>Orion</h1>
+            </header>
             {% block content %} {% endblock %}
         </main>
 

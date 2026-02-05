@@ -14,6 +14,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Final
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -170,3 +171,9 @@ if not DEBUG:
             },
         },
     }
+
+LOGIN_URL = "/"
+
+# PDS variables
+PDS_HOSTNAME: Final[str] = os.environ["ORION_PDS_HOSTNAME"]
+PDS_ADMIN_PASSWORD: Final[str] = os.environ["ORION_PDS_ADMIN_PASSWORD"]
