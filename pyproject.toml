@@ -48,10 +48,10 @@ module = "*.migrations.*"
 ignore_errors = true
 
 [tool.pylint.MASTER]
-ignore = "migrations"
+ignore = "migrations,.venv,__pycache__"
 load-plugins = "pylint_django"
 django-settings-module = "orion.settings"
-disable = "C0114, C0103, C0115, R0914" # missing-module-docstring
+disable = "C0114, C0103, C0415, C0115, R0914"
 
 [tool.pylint.FORMAT]
 max-line-length=95

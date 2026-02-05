@@ -27,8 +27,8 @@ jobs:
         run: uv run mypy .
       - name: Lint code with pylint and flake8
         run: |
-          uv run pylint --ignore=.venv .
-          uv run flake8 --extend-exclude ".venv"
+          uv run pylint .
+          uv run flake8
       - name: Run Django checks
         run: uv run ./manage.py check
       - name: Run tests with pytest
