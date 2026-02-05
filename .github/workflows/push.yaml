@@ -1,0 +1,62 @@
+on:
+  [push, pull_request]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [ '3.14' ]
+    name: Run checks in Python ${{ matrix.python-version }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x64
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+      - name: Sync dependencies with uv
+        run: uv sync
+      - name: Check types with mypy
+        run: uv run mypy barkr
+      - name: Lint code with pylint and flake8
+        run: |
+          uv run pylint barkr
+          uv run flake8 --extend-exclude ".venv"
+      - name: Run Django checks
+        run: uv run ./manage.py check
+      - name: Run tests with pytest
+        run: uv run ./manage.py test
+      - name: Format code with black
+        run: uv run black --check barkr
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Build and push Docker image
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/orion:latest
+            ghcr.io/${{ github.repository_owner }}/orion:${{ github.sha }}
