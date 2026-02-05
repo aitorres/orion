@@ -24,17 +24,17 @@ jobs:
       - name: Sync dependencies with uv
         run: uv sync
       - name: Check types with mypy
-        run: uv run mypy barkr
+        run: uv run mypy .
       - name: Lint code with pylint and flake8
         run: |
-          uv run pylint barkr
+          uv run pylint .
           uv run flake8 --extend-exclude ".venv"
       - name: Run Django checks
         run: uv run ./manage.py check
       - name: Run tests with pytest
         run: uv run ./manage.py test
       - name: Format code with black
-        run: uv run black --check barkr
+        run: uv run black --check .
 
   docker:
     runs-on: ubuntu-latest
