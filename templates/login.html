@@ -1,0 +1,25 @@
+{% extends "_base.html" %}
+{% block title %}Sign in to Orion{% endblock %}
+
+{% block content %}
+<article>
+    <header>
+        <h1>Sign in to Orion</h1>
+    </header>
+    <form method="post" action="{% url 'login' %}">
+        {% csrf_token %}
+        <label for="id_username">Username</label>
+        {{ form.username }}
+        <label for="id_password">Password</label>
+        {{ form.password }}
+        <button type="submit">Sign In</button>
+    </form>
+    <footer>
+        {% if form.errors %}
+        <p>Your username and password didn't match. Please try again.</p>
+        {% else %}
+        <p>Use your credentials to access the Orion dashboard.</p>
+        {% endif %}
+    </footer>
+</article>
+{% endblock %}

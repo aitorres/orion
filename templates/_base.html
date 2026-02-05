@@ -1,0 +1,27 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>{% block title %}Orion{% endblock %}</title>
+
+        <!-- Styles -->
+        <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.indigo.min.css"
+        />
+        <link rel="stylesheet" href="{% static 'css/styles.css' %}" />
+
+        {% block css%} {% endblock %}
+    </head>
+    <body>
+        <header>Orion</header>
+        <main>
+            {% block content %} {% endblock %}
+        </main>
+
+        {% block footer %} {% endblock %}
+        {% block js %} {% endblock %}
+    </body>
+</html>
