@@ -8,6 +8,9 @@ jobs:
       matrix:
         python-version: [ '3.14' ]
     name: Run checks in Python ${{ matrix.python-version }}
+    env:
+      ORION_PDS_HOSTNAME: https://pds.example.com
+      ORION_PDS_ADMIN_PASSWORD: examplepassword
     steps:
       - name: Checkout repo
         uses: actions/checkout@v6
