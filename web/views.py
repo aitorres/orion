@@ -166,7 +166,7 @@ def change_password_view(request: HttpRequest) -> HttpResponse:
         user.set_password(new_password)
         user.save()
 
-        assert isinstance(request.user, get_user_model())
+        assert isinstance(user, get_user_model())
         AuditLog.objects.create(
             user=user,
             event=AuditLogEvent.PASSWORD_CHANGE,
