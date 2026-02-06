@@ -1,5 +1,6 @@
 from typing import Callable
 
+from django.contrib import messages
 from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView
@@ -14,6 +15,7 @@ from django.shortcuts import redirect, render
 from web.models import AuditLog, AuditLogEvent
 from web.utils import (
     delete_pds_account,
+    get_pds_account_info,
     get_pds_accounts,
     get_pds_status,
     takedown_pds_account,
@@ -107,12 +109,14 @@ def account_action_view(request: HttpRequest, did: str, action: str) -> HttpResp
         return HttpResponseBadRequest("Invalid action.")
 
     if request.method == "GET":
+        info = get_pds_account_info(did)
         return render(
             request,
             "account_action.html",
             {
                 "did": did,
                 "action": action,
+                "account_info": info,
             },
         )
 
@@ -126,6 +130,7 @@ def account_action_view(request: HttpRequest, did: str, action: str) -> HttpResp
             description=f"User performed {action} on {did}",
         )
 
+        messages.success(request, f"Successfully performed {action} on account {did}.")
         return redirect("dashboard")
 
     return HttpResponseNotAllowed(["GET", "POST"])

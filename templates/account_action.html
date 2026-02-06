@@ -7,11 +7,18 @@
         <h2>Confirm {{ action|title }}</h2>
     </header>
     <p>Are you sure you want to <strong>{{ action }}</strong> the account with DID <code>{{ did }}</code>?</p>
+    <ul>
+        <li><strong>DID:</strong> <a href="https://bsky.app/profile/{{ account_info.did }}" target="_blank">{{ account_info.did }}</a></li>
+        <li><strong>Handle:</strong> {{ account_info.handle }}</li>
+        <li><strong>Email:</strong> {{ account_info.email }}</li>
+        <li><strong>Indexed at:</strong> {{ account_info.indexedAt }}</li>
+        <li>(<a href="https://bsky.app/profile/{{ account_info.did }}" target="_blank">View on Bluesky</a> / <a href="https://pds.ls/at://{{ account_info.did }}" target="_blank">View on PDSLS</a>)</li>
+    </ul>
     <p>This action may be irreversible.</p>
     <form method="post" action="{% url 'account_action' did action %}">
         {% csrf_token %}
         <button type="submit">Confirm {{ action|title }}</button>
     </form>
-    <button class="secondary" onclick="location.href='{% url 'dashboard' %}'">Cancel</button>
+    <button class="secondary" onclick="location.href='{% url 'dashboard' %}'" >Cancel</button>
 </article>
 {% endblock %}

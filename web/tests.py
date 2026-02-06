@@ -238,7 +238,7 @@ class AccountActionViewTests(BaseViewTest):
         self.assertContains(response, "/dashboard/")
 
 
-@override_settings(PDS_HOSTNAME="https://pds.example.com", PDS_ADMIN_PASSWORD="admin123")
+@override_settings(PDS_HOSTNAME="https://localhost", PDS_ADMIN_PASSWORD="admin")
 class UtilsTests(TestCase):
     """Tests for the utils module."""
 
@@ -251,7 +251,7 @@ class UtilsTests(TestCase):
 
         self.assertTrue(result)
         mock_get.assert_called_once_with(
-            "https://pds.example.com/xrpc/_health",
+            "https://localhost/xrpc/_health",
             timeout=10,
         )
 
@@ -383,11 +383,9 @@ class UtilsTests(TestCase):
         """Test get_pds_account_info returns account info on success."""
         mock_response = Mock()
         mock_response.json.return_value = {
-            "info": {
-                "did": "did:plc:123",
-                "handle": "alice.bsky.social",
-                "email": "alice@example.com",
-            }
+            "did": "did:plc:123",
+            "handle": "alice.bsky.social",
+            "email": "alice@example.com",
         }
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
@@ -403,23 +401,11 @@ class UtilsTests(TestCase):
             },
         )
         mock_get.assert_called_once_with(
-            "https://pds.example.com/xrpc/com.atproto.admin.getAccountInfo",
-            auth=("admin", "admin123"),
+            "https://localhost/xrpc/com.atproto.admin.getAccountInfo",
+            auth=("admin", "admin"),
             params={"did": "did:plc:123"},
             timeout=10,
         )
-
-    @patch("web.utils.requests.get")
-    def test_get_pds_account_info_no_info_key(self, mock_get: Mock):
-        """Test get_pds_account_info returns None when info key is missing."""
-        mock_response = Mock()
-        mock_response.json.return_value = {}
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
-
-        result = get_pds_account_info("did:plc:123")
-
-        self.assertIsNone(result)
 
     @patch("web.utils.requests.get")
     def test_get_pds_account_info_request_exception(self, mock_get: Mock):
@@ -441,8 +427,8 @@ class UtilsTests(TestCase):
 
         self.assertTrue(result)
         mock_post.assert_called_once_with(
-            "https://pds.example.com/xrpc/com.atproto.admin.deleteAccount",
-            auth=("admin", "admin123"),
+            "https://localhost/xrpc/com.atproto.admin.deleteAccount",
+            auth=("admin", "admin"),
             json={"did": "did:plc:123"},
             timeout=10,
         )
@@ -470,7 +456,7 @@ class UtilsTests(TestCase):
         call_kwargs = mock_post.call_args[1]
         self.assertEqual(
             call_kwargs["url"] if "url" in call_kwargs else mock_post.call_args[0][0],
-            "https://pds.example.com/xrpc/com.atproto.admin.updateSubjectStatus",
+            "https://localhost/xrpc/com.atproto.admin.updateSubjectStatus",
         )
         payload = call_kwargs["json"]
         self.assertEqual(payload["subject"]["$type"], "com.atproto.admin.defs#repoRef")

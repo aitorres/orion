@@ -15,10 +15,18 @@
         {% block css %} {% endblock %}
     </head>
     <body>
+
         <main class="content container">
             <header>
                 <h1>Orion</h1>
             </header>
+            {% if messages %}
+                <section>
+                    {% for message in messages %}
+                    <div class="alert {{ message.tags }}">{{ message }}</div>
+                    {% endfor %}
+                </section>
+            {% endif %}
             {% block content %} {% endblock %}
         </main>
 

@@ -92,7 +92,7 @@ def get_pds_account_info(did: str) -> dict[str, Any] | None:
         )
         response.raise_for_status()
         data = response.json()
-        return data.get("info")
+        return data
     except requests.RequestException as e:
         logging.exception("Failed to retrieve account info for DID %s.", did, exc_info=e)
         return None
