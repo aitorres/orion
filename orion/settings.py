@@ -38,6 +38,10 @@ ALLOWED_HOSTS = [
 ]
 ALLOWED_HOSTS.extend(os.environ.get("ORION_ALLOWED_HOSTS", "").split(","))
 
+ALLOWED_CIDR_NETS = [
+    "10.0.0.0/8",
+]
+
 
 # Application definition
 
@@ -51,6 +55,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "allow_cidr.middleware.AllowCIDRMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
