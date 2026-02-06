@@ -8,14 +8,26 @@ from web.models import AuditLog, AuditLogEvent
 from web.utils import extend_with_account_info, get_pds_accounts, get_pds_status
 
 
-class WebTests(TestCase):
-    """Tests for the web application."""
+class BaseViewTest(TestCase):
+    """Base test case with shared setUp for view tests."""
 
     def setUp(self):
         """Set up test environment."""
 
         User = get_user_model()
         User.objects.create_user(username="testuser", password="testpass")
+
+    def authenticate(self):
+        """Log in the test user."""
+        self.client.login(username="testuser", password="testpass")
+
+    def get_user(self):
+        """Return the test user instance."""
+        return get_user_model().objects.get(username="testuser")
+
+
+class HealthcheckViewTests(BaseViewTest):
+    """Tests for the healthcheck view."""
 
     def test_healthcheck(self):
         """Test that the healthcheck endpoint returns OK."""
@@ -24,12 +36,20 @@ class WebTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content.decode(), "OK")
 
+
+class LoginViewTests(BaseViewTest):
+    """Tests for the login view."""
+
     def test_login_page(self):
         """Test that the login page loads correctly."""
 
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Sign In")
+
+
+class DashboardViewTests(BaseViewTest):
+    """Tests for the dashboard view."""
 
     def test_dashboard_requires_login(self):
         """Test that the dashboard page requires authentication."""
@@ -41,7 +61,7 @@ class WebTests(TestCase):
     def test_dashboard_page_authenticated(self):
         """Test that the dashboard page loads for authenticated users."""
 
-        self.client.login(username="testuser", password="testpass")
+        self.authenticate()
 
         response = self.client.get("/dashboard/")
         self.assertEqual(response.status_code, 200)
@@ -50,12 +70,16 @@ class WebTests(TestCase):
     def test_dashboard_has_audit_log_button(self):
         """Test that the dashboard page has an Audit Log button."""
 
-        self.client.login(username="testuser", password="testpass")
+        self.authenticate()
 
         response = self.client.get("/dashboard/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Audit Log")
         self.assertContains(response, "/audit-log/")
+
+
+class AuditLogViewTests(BaseViewTest):
+    """Tests for the audit log view."""
 
     def test_audit_log_requires_login(self):
         """Test that the audit log page requires authentication."""
@@ -67,7 +91,7 @@ class WebTests(TestCase):
     def test_audit_log_page_authenticated(self):
         """Test that the audit log page loads for authenticated users."""
 
-        self.client.login(username="testuser", password="testpass")
+        self.authenticate()
 
         response = self.client.get("/audit-log/")
         self.assertEqual(response.status_code, 200)
@@ -76,8 +100,8 @@ class WebTests(TestCase):
     def test_audit_log_displays_events(self):
         """Test that audit log events are displayed in the table."""
 
-        self.client.login(username="testuser", password="testpass")
-        user = get_user_model().objects.get(username="testuser")
+        self.authenticate()
+        user = self.get_user()
 
         AuditLog.objects.create(
             user=user,
@@ -101,7 +125,7 @@ class WebTests(TestCase):
     def test_audit_log_empty(self):
         """Test that audit log shows message when no events exist."""
 
-        self.client.login(username="testuser", password="testpass")
+        self.authenticate()
 
         response = self.client.get("/audit-log/")
         self.assertEqual(response.status_code, 200)
@@ -110,8 +134,8 @@ class WebTests(TestCase):
     def test_audit_log_ordered_newest_first(self):
         """Test that audit log events are ordered newest first."""
 
-        self.client.login(username="testuser", password="testpass")
-        user = get_user_model().objects.get(username="testuser")
+        self.authenticate()
+        user = self.get_user()
 
         log1 = AuditLog.objects.create(
             user=user,
@@ -128,6 +152,82 @@ class WebTests(TestCase):
         audit_logs = list(response.context["audit_logs"])
         self.assertEqual(audit_logs[0].id, log2.id)
         self.assertEqual(audit_logs[1].id, log1.id)
+
+
+class AccountActionViewTests(BaseViewTest):
+    """Tests for the account action view."""
+
+    def test_action_requires_login(self):
+        """Test that the account action page requires authentication."""
+        response = self.client.get("/accounts/did:plc:123/takedown/")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/?next=", response.url)
+
+    def test_action_get_shows_confirmation(self):
+        """Test that GET renders a confirmation page."""
+        self.authenticate()
+        response = self.client.get("/accounts/did:plc:123/takedown/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Confirm Takedown")
+        self.assertContains(response, "did:plc:123")
+
+    def test_action_get_delete_shows_confirmation(self):
+        """Test that GET for delete renders a confirmation page."""
+        self.authenticate()
+        response = self.client.get("/accounts/did:plc:456/delete/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Confirm Delete")
+        self.assertContains(response, "did:plc:456")
+
+    def test_action_invalid_action_returns_400(self):
+        """Test that an invalid action returns 400."""
+        self.authenticate()
+        response = self.client.get("/accounts/did:plc:123/invalid/")
+        self.assertEqual(response.status_code, 400)
+
+    def test_action_post_takedown_redirects_to_dashboard(self):
+        """Test that POST takedown redirects to dashboard."""
+        self.authenticate()
+        response = self.client.post("/accounts/did:plc:123/takedown/")
+        self.assertRedirects(response, "/dashboard/")
+
+    def test_action_post_delete_redirects_to_dashboard(self):
+        """Test that POST delete redirects to dashboard."""
+        self.authenticate()
+        response = self.client.post("/accounts/did:plc:123/delete/")
+        self.assertRedirects(response, "/dashboard/")
+
+    def test_action_post_creates_audit_log_takedown(self):
+        """Test that POST takedown creates an audit log entry."""
+        self.authenticate()
+        self.client.post("/accounts/did:plc:123/takedown/")
+
+        log = AuditLog.objects.filter(event=AuditLogEvent.TAKEDOWN).first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.description, "User performed takedown on did:plc:123")
+        self.assertEqual(log.user.username, "testuser")
+
+    def test_action_post_creates_audit_log_delete(self):
+        """Test that POST delete creates an audit log entry."""
+        self.authenticate()
+        self.client.post("/accounts/did:plc:789/delete/")
+
+        log = AuditLog.objects.filter(event=AuditLogEvent.DELETE).first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.description, "User performed delete on did:plc:789")
+
+    def test_action_post_invalid_action_returns_400(self):
+        """Test that POST with an invalid action returns 400."""
+        self.authenticate()
+        response = self.client.post("/accounts/did:plc:123/invalid/")
+        self.assertEqual(response.status_code, 400)
+
+    def test_action_confirmation_has_cancel_button(self):
+        """Test that the confirmation page has a cancel button linking to dashboard."""
+        self.authenticate()
+        response = self.client.get("/accounts/did:plc:123/takedown/")
+        self.assertContains(response, "Cancel")
+        self.assertContains(response, "/dashboard/")
 
 
 @override_settings(PDS_HOSTNAME="https://pds.example.com", PDS_ADMIN_PASSWORD="admin123")

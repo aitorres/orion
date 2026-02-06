@@ -36,6 +36,7 @@
                     <th>Handle</th>
                     <th>DID</th>
                     <th>Status</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -49,6 +50,10 @@
                         {% else %}
                             {{ account.status.title }}
                         {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'account_action' account.did 'takedown' %}" role="button" class="secondary">Takedown</a>
+                        <a href="{% url 'account_action' account.did 'delete' %}" role="button" class="secondary">Delete</a>
                     </td>
                 </tr>
                 {% endfor %}

@@ -1,11 +1,28 @@
+from typing import Callable
+
 from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView
-from django.http import HttpRequest, HttpResponse
+from django.http import (
+    HttpRequest,
+    HttpResponse,
+    HttpResponseBadRequest,
+    HttpResponseNotAllowed,
+)
 from django.shortcuts import redirect, render
 
 from web.models import AuditLog, AuditLogEvent
 from web.utils import get_pds_accounts, get_pds_status
+
+VALID_ACTIONS = {
+    "takedown": AuditLogEvent.TAKEDOWN,
+    "delete": AuditLogEvent.DELETE,
+}
+
+ACTION_HANDLERS: dict[str, Callable] = {
+    "takedown": lambda did: None,
+    "delete": lambda did: None,
+}
 
 
 class OrionLoginView(LoginView):
@@ -76,3 +93,36 @@ def audit_log_view(request: HttpRequest) -> HttpResponse:
             "audit_logs": audit_logs,
         },
     )
+
+
+@login_required
+def account_action_view(request: HttpRequest, did: str, action: str) -> HttpResponse:
+    """Render a confirmation page (GET) or execute an action (POST) on an account."""
+
+    action = action.lower()
+
+    if action not in VALID_ACTIONS:
+        return HttpResponseBadRequest("Invalid action.")
+
+    if request.method == "GET":
+        return render(
+            request,
+            "account_action.html",
+            {
+                "did": did,
+                "action": action,
+            },
+        )
+
+    if request.method == "POST":
+        ACTION_HANDLERS[action](did)
+
+        AuditLog.objects.create(
+            user=request.user,
+            event=VALID_ACTIONS[action],
+            description=f"User performed {action} on {did}",
+        )
+
+        return redirect("dashboard")
+
+    return HttpResponseNotAllowed(["GET", "POST"])
