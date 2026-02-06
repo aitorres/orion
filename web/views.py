@@ -1,7 +1,7 @@
 from typing import Callable
 
 from django.contrib import messages
-from django.contrib.auth import logout
+from django.contrib.auth import get_user_model, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView
 from django.http import (
@@ -121,6 +121,7 @@ def account_action_view(request: HttpRequest, did: str, action: str) -> HttpResp
         )
 
     if request.method == "POST":
+        assert isinstance(request.user, get_user_model())
         audit_event, handler = ACCOUNT_ACTIONS[action]
         handler(did)
 
