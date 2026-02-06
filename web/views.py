@@ -58,3 +58,21 @@ def dashboard_view(request: HttpRequest) -> HttpResponse:
             "accounts": get_pds_accounts(),
         },
     )
+
+
+@login_required
+def audit_log_view(request: HttpRequest) -> HttpResponse:
+    """Render the audit log page for authenticated users."""
+
+    if not request.user.is_authenticated:
+        return redirect("login")
+
+    audit_logs = AuditLog.objects.select_related("user").order_by("-created_at")
+
+    return render(
+        request,
+        "audit_log.html",
+        {
+            "audit_logs": audit_logs,
+        },
+    )

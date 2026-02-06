@@ -1,0 +1,39 @@
+{% extends "_base.html" %}
+{% block title %}Audit Log{% endblock %}
+
+{% block content %}
+<article>
+    <header>
+        <h1>Audit Log</h1>
+    </header>
+    <p>A chronological record of all events in the system.</p>
+    <button onclick="location.href='{% url 'dashboard' %}'">Back to Dashboard</button>
+</article>
+
+<article>
+    {% if audit_logs %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Event Type</th>
+                    <th>Username</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in audit_logs %}
+                <tr>
+                    <td>{{ log.created_at }}</td>
+                    <td>{{ log.get_event_display }}</td>
+                    <td>{{ log.user.username }}</td>
+                    <td>{{ log.description|default:"" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No audit log events found.</p>
+    {% endif %}
+</article>
+{% endblock %}

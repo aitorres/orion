@@ -4,6 +4,7 @@ import requests
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
+from web.models import AuditLog, AuditLogEvent
 from web.utils import extend_with_account_info, get_pds_accounts, get_pds_status
 
 
@@ -45,6 +46,88 @@ class WebTests(TestCase):
         response = self.client.get("/dashboard/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Dashboard")
+
+    def test_dashboard_has_audit_log_button(self):
+        """Test that the dashboard page has an Audit Log button."""
+
+        self.client.login(username="testuser", password="testpass")
+
+        response = self.client.get("/dashboard/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Audit Log")
+        self.assertContains(response, "/audit-log/")
+
+    def test_audit_log_requires_login(self):
+        """Test that the audit log page requires authentication."""
+
+        response = self.client.get("/audit-log/")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/?next=/audit-log/", response.url)
+
+    def test_audit_log_page_authenticated(self):
+        """Test that the audit log page loads for authenticated users."""
+
+        self.client.login(username="testuser", password="testpass")
+
+        response = self.client.get("/audit-log/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Audit Log")
+
+    def test_audit_log_displays_events(self):
+        """Test that audit log events are displayed in the table."""
+
+        self.client.login(username="testuser", password="testpass")
+        user = get_user_model().objects.get(username="testuser")
+
+        AuditLog.objects.create(
+            user=user,
+            event=AuditLogEvent.LOGIN,
+            description="User logged in successfully",
+        )
+        AuditLog.objects.create(
+            user=user,
+            event=AuditLogEvent.LOGOUT,
+            description="User logged out",
+        )
+
+        response = self.client.get("/audit-log/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Login")
+        self.assertContains(response, "Logout")
+        self.assertContains(response, "User logged in successfully")
+        self.assertContains(response, "User logged out")
+        self.assertContains(response, "testuser")
+
+    def test_audit_log_empty(self):
+        """Test that audit log shows message when no events exist."""
+
+        self.client.login(username="testuser", password="testpass")
+
+        response = self.client.get("/audit-log/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "No audit log events found.")
+
+    def test_audit_log_ordered_newest_first(self):
+        """Test that audit log events are ordered newest first."""
+
+        self.client.login(username="testuser", password="testpass")
+        user = get_user_model().objects.get(username="testuser")
+
+        log1 = AuditLog.objects.create(
+            user=user,
+            event=AuditLogEvent.LOGIN,
+            description="First event",
+        )
+        log2 = AuditLog.objects.create(
+            user=user,
+            event=AuditLogEvent.LOGOUT,
+            description="Second event",
+        )
+
+        response = self.client.get("/audit-log/")
+        audit_logs = list(response.context["audit_logs"])
+        self.assertEqual(audit_logs[0].id, log2.id)
+        self.assertEqual(audit_logs[1].id, log1.id)
 
 
 @override_settings(PDS_HOSTNAME="https://pds.example.com", PDS_ADMIN_PASSWORD="admin123")

@@ -7,6 +7,7 @@
         <h1>Welcome to Orion!</h1>
     </header>
     <p>This dashboard provides an overview of the PDS and lets you take administrative actions</p>
+    <button onclick="location.href='{% url 'audit_log' %}'">Audit Log</button>
     <button onclick="location.href='{% url 'logout' %}'">Log out</button>
     <footer>
         <p>Beware! Actions may be irreversible.</p>
