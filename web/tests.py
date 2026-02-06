@@ -5,7 +5,15 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
 from web.models import AuditLog, AuditLogEvent
-from web.utils import extend_with_account_info, get_pds_accounts, get_pds_status
+from web.utils import (
+    delete_pds_account,
+    extend_with_account_info,
+    get_pds_account_info,
+    get_pds_accounts,
+    get_pds_status,
+    takedown_pds_account,
+    untakedown_pds_account,
+)
 
 
 class BaseViewTest(TestCase):
@@ -369,3 +377,139 @@ class UtilsTests(TestCase):
 
         # With batch size 2 and 5 DIDs, we should have 3 requests
         self.assertEqual(mock_get.call_count, 3)
+
+    @patch("web.utils.requests.get")
+    def test_get_pds_account_info_success(self, mock_get: Mock):
+        """Test get_pds_account_info returns account info on success."""
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "info": {
+                "did": "did:plc:123",
+                "handle": "alice.bsky.social",
+                "email": "alice@example.com",
+            }
+        }
+        mock_response.raise_for_status = Mock()
+        mock_get.return_value = mock_response
+
+        result = get_pds_account_info("did:plc:123")
+
+        self.assertEqual(
+            result,
+            {
+                "did": "did:plc:123",
+                "handle": "alice.bsky.social",
+                "email": "alice@example.com",
+            },
+        )
+        mock_get.assert_called_once_with(
+            "https://pds.example.com/xrpc/com.atproto.admin.getAccountInfo",
+            auth=("admin", "admin123"),
+            params={"did": "did:plc:123"},
+            timeout=10,
+        )
+
+    @patch("web.utils.requests.get")
+    def test_get_pds_account_info_no_info_key(self, mock_get: Mock):
+        """Test get_pds_account_info returns None when info key is missing."""
+        mock_response = Mock()
+        mock_response.json.return_value = {}
+        mock_response.raise_for_status = Mock()
+        mock_get.return_value = mock_response
+
+        result = get_pds_account_info("did:plc:123")
+
+        self.assertIsNone(result)
+
+    @patch("web.utils.requests.get")
+    def test_get_pds_account_info_request_exception(self, mock_get: Mock):
+        """Test get_pds_account_info returns None on request failure."""
+        mock_get.side_effect = requests.RequestException("Connection refused")
+
+        result = get_pds_account_info("did:plc:123")
+
+        self.assertIsNone(result)
+
+    @patch("web.utils.requests.post")
+    def test_delete_pds_account_success(self, mock_post: Mock):
+        """Test delete_pds_account returns True on success."""
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+
+        result = delete_pds_account("did:plc:123")
+
+        self.assertTrue(result)
+        mock_post.assert_called_once_with(
+            "https://pds.example.com/xrpc/com.atproto.admin.deleteAccount",
+            auth=("admin", "admin123"),
+            json={"did": "did:plc:123"},
+            timeout=10,
+        )
+
+    @patch("web.utils.requests.post")
+    def test_delete_pds_account_request_exception(self, mock_post: Mock):
+        """Test delete_pds_account returns False on request failure."""
+        mock_post.side_effect = requests.RequestException("Connection refused")
+
+        result = delete_pds_account("did:plc:123")
+
+        self.assertFalse(result)
+
+    @patch("web.utils.requests.post")
+    def test_takedown_pds_account_success(self, mock_post: Mock):
+        """Test takedown_pds_account returns True on success."""
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+
+        result = takedown_pds_account("did:plc:123")
+
+        self.assertTrue(result)
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args[1]
+        self.assertEqual(
+            call_kwargs["url"] if "url" in call_kwargs else mock_post.call_args[0][0],
+            "https://pds.example.com/xrpc/com.atproto.admin.updateSubjectStatus",
+        )
+        payload = call_kwargs["json"]
+        self.assertEqual(payload["subject"]["$type"], "com.atproto.admin.defs#repoRef")
+        self.assertEqual(payload["subject"]["did"], "did:plc:123")
+        self.assertTrue(payload["takedown"]["applied"])
+        self.assertIn("ref", payload["takedown"])
+
+    @patch("web.utils.requests.post")
+    def test_takedown_pds_account_request_exception(self, mock_post: Mock):
+        """Test takedown_pds_account returns False on request failure."""
+        mock_post.side_effect = requests.RequestException("Connection refused")
+
+        result = takedown_pds_account("did:plc:123")
+
+        self.assertFalse(result)
+
+    @patch("web.utils.requests.post")
+    def test_untakedown_pds_account_success(self, mock_post: Mock):
+        """Test untakedown_pds_account returns True on success."""
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+
+        result = untakedown_pds_account("did:plc:123")
+
+        self.assertTrue(result)
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args[1]
+        payload = call_kwargs["json"]
+        self.assertEqual(payload["subject"]["$type"], "com.atproto.admin.defs#repoRef")
+        self.assertEqual(payload["subject"]["did"], "did:plc:123")
+        self.assertFalse(payload["takedown"]["applied"])
+        self.assertNotIn("ref", payload["takedown"])
+
+    @patch("web.utils.requests.post")
+    def test_untakedown_pds_account_request_exception(self, mock_post: Mock):
+        """Test untakedown_pds_account returns False on request failure."""
+        mock_post.side_effect = requests.RequestException("Connection refused")
+
+        result = untakedown_pds_account("did:plc:123")
+
+        self.assertFalse(result)

@@ -12,16 +12,18 @@ from django.http import (
 from django.shortcuts import redirect, render
 
 from web.models import AuditLog, AuditLogEvent
-from web.utils import get_pds_accounts, get_pds_status
+from web.utils import (
+    delete_pds_account,
+    get_pds_accounts,
+    get_pds_status,
+    takedown_pds_account,
+    untakedown_pds_account,
+)
 
-VALID_ACTIONS = {
-    "takedown": AuditLogEvent.TAKEDOWN,
-    "delete": AuditLogEvent.DELETE,
-}
-
-ACTION_HANDLERS: dict[str, Callable] = {
-    "takedown": lambda did: None,
-    "delete": lambda did: None,
+ACCOUNT_ACTIONS: dict[str, tuple[AuditLogEvent, Callable]] = {
+    "takedown": (AuditLogEvent.TAKEDOWN, takedown_pds_account),
+    "untakedown": (AuditLogEvent.UNTAKEDOWN, untakedown_pds_account),
+    "delete": (AuditLogEvent.DELETE, delete_pds_account),
 }
 
 
@@ -101,7 +103,7 @@ def account_action_view(request: HttpRequest, did: str, action: str) -> HttpResp
 
     action = action.lower()
 
-    if action not in VALID_ACTIONS:
+    if action not in ACCOUNT_ACTIONS:
         return HttpResponseBadRequest("Invalid action.")
 
     if request.method == "GET":
@@ -115,11 +117,12 @@ def account_action_view(request: HttpRequest, did: str, action: str) -> HttpResp
         )
 
     if request.method == "POST":
-        ACTION_HANDLERS[action](did)
+        audit_event, handler = ACCOUNT_ACTIONS[action]
+        handler(did)
 
         AuditLog.objects.create(
             user=request.user,
-            event=VALID_ACTIONS[action],
+            event=audit_event,
             description=f"User performed {action} on {did}",
         )
 

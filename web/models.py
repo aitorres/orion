@@ -10,6 +10,7 @@ class AuditLogEvent(models.TextChoices):
     LOGOUT = "LOGOUT", "Logout"
     DELETE = "DELETE", "Delete"
     TAKEDOWN = "TAKEDOWN", "Takedown"
+    UNTAKEDOWN = "UNTAKEDOWN", "Untakedown"
 
 
 class AuditLog(models.Model):

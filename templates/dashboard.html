@@ -52,7 +52,11 @@
                         {% endif %}
                     </td>
                     <td>
-                        <a href="{% url 'account_action' account.did 'takedown' %}" role="button" class="secondary">Takedown</a>
+                        {% if account.status == 'takendown' %}
+                            <a href="{% url 'account_action' account.did 'untakedown' %}" role="button" class="secondary">Untakedown</a>
+                        {% else %}
+                            <a href="{% url 'account_action' account.did 'takedown' %}" role="button" class="secondary">Takedown</a>
+                        {% endif %}
                         <a href="{% url 'account_action' account.did 'delete' %}" role="button" class="secondary">Delete</a>
                     </td>
                 </tr>
