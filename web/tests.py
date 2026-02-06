@@ -238,6 +238,102 @@ class AccountActionViewTests(BaseViewTest):
         self.assertContains(response, "/dashboard/")
 
 
+class ChangePasswordViewTests(BaseViewTest):
+    """Tests for the change password view."""
+
+    def test_change_password_requires_login(self):
+        """Test that the change password page requires authentication."""
+        response = self.client.get("/change-password/")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/?next=/change-password/", response.url)
+
+    def test_change_password_get_renders_form(self):
+        """Test that GET renders the change password form."""
+        self.authenticate()
+        response = self.client.get("/change-password/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Change Password")
+        self.assertContains(response, "Current Password")
+        self.assertContains(response, "New Password")
+        self.assertContains(response, "Confirm New Password")
+
+    def test_change_password_success(self):
+        """Test successful password change."""
+        self.authenticate()
+        response = self.client.post(
+            "/change-password/",
+            {
+                "current_password": "testpass",
+                "new_password": "newpassword123",
+                "confirm_password": "newpassword123",
+            },
+        )
+        self.assertRedirects(response, "/dashboard/", fetch_redirect_response=False)
+
+        self.client.logout()
+        login_success = self.client.login(username="testuser", password="newpassword123")
+        self.assertTrue(login_success)
+
+    def test_change_password_wrong_current_password(self):
+        """Test that wrong current password shows error."""
+        self.authenticate()
+        response = self.client.post(
+            "/change-password/",
+            {
+                "current_password": "wrongpassword",
+                "new_password": "newpassword123",
+                "confirm_password": "newpassword123",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Current password is incorrect")
+
+    def test_change_password_new_passwords_dont_match(self):
+        """Test that mismatched new passwords show error."""
+        self.authenticate()
+        response = self.client.post(
+            "/change-password/",
+            {
+                "current_password": "testpass",
+                "new_password": "newpassword123",
+                "confirm_password": "differentpassword",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "New passwords do not match")
+
+    def test_change_password_same_as_current(self):
+        """Test that new password same as current shows error."""
+        self.authenticate()
+        response = self.client.post(
+            "/change-password/",
+            {
+                "current_password": "testpass",
+                "new_password": "testpass",
+                "confirm_password": "testpass",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "New password must be different from current password")
+
+    def test_change_password_creates_audit_log(self):
+        """Test that successful password change creates an audit log entry."""
+        self.authenticate()
+        self.client.post(
+            "/change-password/",
+            {
+                "current_password": "testpass",
+                "new_password": "newpassword123",
+                "confirm_password": "newpassword123",
+            },
+        )
+
+        log = AuditLog.objects.filter(event=AuditLogEvent.PASSWORD_CHANGE).first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.description, "User changed their password")
+        self.assertEqual(log.user.username, "testuser")
+
+
 @override_settings(PDS_HOSTNAME="https://localhost", PDS_ADMIN_PASSWORD="admin")
 class UtilsTests(TestCase):
     """Tests for the utils module."""

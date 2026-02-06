@@ -135,3 +135,44 @@ def account_action_view(request: HttpRequest, did: str, action: str) -> HttpResp
         return redirect("dashboard")
 
     return HttpResponseNotAllowed(["GET", "POST"])
+
+
+@login_required
+def change_password_view(request: HttpRequest) -> HttpResponse:
+    """Handle password change form display (GET) and processing (POST)."""
+
+    if request.method == "GET":
+        return render(request, "change_password.html")
+
+    if request.method == "POST":
+        current_password = request.POST.get("current_password", "")
+        new_password = request.POST.get("new_password", "")
+        confirm_password = request.POST.get("confirm_password", "")
+
+        user = request.user
+
+        if not user.check_password(current_password):
+            messages.error(request, "Current password is incorrect.")
+            return render(request, "change_password.html")
+
+        if new_password != confirm_password:
+            messages.error(request, "New passwords do not match.")
+            return render(request, "change_password.html")
+
+        if new_password == current_password:
+            messages.error(request, "New password must be different from current password.")
+            return render(request, "change_password.html")
+
+        user.set_password(new_password)
+        user.save()
+
+        AuditLog.objects.create(
+            user=user,
+            event=AuditLogEvent.PASSWORD_CHANGE,
+            description="User changed their password",
+        )
+
+        messages.success(request, "Password changed successfully.")
+        return redirect("dashboard")
+
+    return HttpResponseNotAllowed(["GET", "POST"])
