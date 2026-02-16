@@ -26,6 +26,7 @@ ACCOUNT_ACTIONS: dict[str, tuple[AuditLogEvent, Callable]] = {
     "takedown": (AuditLogEvent.TAKEDOWN, takedown_pds_account),
     "untakedown": (AuditLogEvent.UNTAKEDOWN, untakedown_pds_account),
     "delete": (AuditLogEvent.DELETE, delete_pds_account),
+    "info": (AuditLogEvent.INFO, lambda _: None),
 }
 
 

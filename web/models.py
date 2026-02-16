@@ -12,6 +12,7 @@ class AuditLogEvent(models.TextChoices):
     TAKEDOWN = "TAKEDOWN", "Takedown"
     UNTAKEDOWN = "UNTAKEDOWN", "Untakedown"
     PASSWORD_CHANGE = "PASSWORD_CHANGE", "Password Change"
+    INFO = "INFO", "Info"
 
 
 class AuditLog(models.Model):

@@ -53,6 +53,7 @@
                         {% endif %}
                     </td>
                     <td>
+                        <a href="{% url 'account_action' account.did 'info' %}" role="button" class="secondary">Info</a>
                         {% if account.status == 'takendown' %}
                             <a href="{% url 'account_action' account.did 'untakedown' %}" role="button" class="secondary">Untakedown</a>
                         {% else %}
