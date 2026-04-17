@@ -1,3 +1,4 @@
+import csv
 from typing import Callable
 
 from django.contrib import messages
@@ -216,3 +217,62 @@ def change_password_view(request: HttpRequest) -> HttpResponse:
         return redirect("dashboard")
 
     return HttpResponseNotAllowed(["GET", "POST"])
+
+
+@login_required
+def export_accounts_csv_view(request: HttpRequest) -> HttpResponse:
+    """Export all accounts to a CSV file."""
+
+    if not request.user.is_authenticated:
+        return redirect("login")
+
+    # Get all accounts
+    accounts = get_pds_accounts()
+    if not accounts:
+        return HttpResponse("No accounts to export.", status=400)
+
+    # Get all account infos in batches
+    dids = [account["did"] for account in accounts]
+    account_infos = {}
+    for i in range(0, len(dids), BATCH_SIZE):
+        batch = dids[i : i + BATCH_SIZE]
+        infos = get_pds_account_batch_infos(batch)
+        for info in infos:
+            account_infos[info["did"]] = info
+
+    # Get 2FA status
+    gatekeeper_dids = get_gatekeeper_required_dids()
+
+    # Create CSV response
+    response = HttpResponse(content_type="text/csv")
+    response["Content-Disposition"] = "attachment; filename=accounts_export.csv"
+
+    writer = csv.DictWriter(
+        response, fieldnames=["did", "handle", "2fa_status", "email", "account_status"]
+    )
+    writer.writeheader()
+
+    for account in accounts:
+        did = account["did"]
+        info = account_infos.get(did, {})
+
+        writer.writerow(
+            {
+                "did": did,
+                "handle": info.get("handle", "unknown"),
+                "2fa_status": "Enabled" if did in gatekeeper_dids else "Disabled",
+                "email": info.get("email", ""),
+                "account_status": (
+                    "Active" if account.get("active") else account.get("status", "unknown")
+                ),
+            }
+        )
+
+    # Log the export action
+    AuditLog.objects.create(
+        user=request.user,
+        event=AuditLogEvent.INFO,
+        description="User exported accounts to CSV",
+    )
+
+    return response
