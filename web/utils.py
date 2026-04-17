@@ -8,7 +8,7 @@ import requests
 from orion import settings
 
 REQUESTS_TIMEOUT_IN_SECONDS: Final[int] = 10
-BATCH_SIZE: Final[int] = 100
+BATCH_SIZE: Final[int] = 20
 
 
 def get_pds_status() -> bool:
