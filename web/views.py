@@ -1,6 +1,5 @@
 from typing import Callable
 
-from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model, logout
 from django.contrib.auth.decorators import login_required
@@ -10,13 +9,17 @@ from django.http import (
     HttpResponse,
     HttpResponseBadRequest,
     HttpResponseNotAllowed,
+    JsonResponse,
 )
 from django.shortcuts import redirect, render
 
+from orion import settings
 from web.models import AuditLog, AuditLogEvent
 from web.utils import (
+    BATCH_SIZE,
     delete_pds_account,
     get_gatekeeper_required_dids,
+    get_pds_account_batch_infos,
     get_pds_account_info,
     get_pds_accounts,
     get_pds_status,
@@ -78,6 +81,7 @@ def dashboard_view(request: HttpRequest) -> HttpResponse:
         "is_service_healthy": get_pds_status(),
         "accounts": get_pds_accounts(),
         "gatekeeper_enabled": settings.GATEKEEPER_ENABLED,
+        "batch_size": BATCH_SIZE,
     }
 
     if settings.GATEKEEPER_ENABLED:
@@ -88,6 +92,31 @@ def dashboard_view(request: HttpRequest) -> HttpResponse:
         "dashboard.html",
         context,
     )
+
+
+@login_required
+def account_infos_api_view(request: HttpRequest) -> HttpResponse:
+    """Return account infos for the DIDs provided in the ``dids`` query param.
+
+    Used by the dashboard to progressively populate the accounts table after
+    the initial render. At most ``BATCH_SIZE`` DIDs may be requested per call.
+    """
+
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+
+    dids = request.GET.getlist("dids")
+    if not dids:
+        return JsonResponse({"infos": []})
+
+    if len(dids) > BATCH_SIZE:
+        return HttpResponseBadRequest(f"At most {BATCH_SIZE} DIDs per request.")
+
+    infos = get_pds_account_batch_infos(dids)
+    return JsonResponse({"infos": infos})
 
 
 @login_required

@@ -43,8 +43,8 @@
             </thead>
             <tbody>
                 {% for account in accounts %}
-                <tr>
-                    <td>{{ account.handle }}</td>
+                <tr data-did="{{ account.did }}">
+                    <td class="account-handle" aria-busy="true">Loading&hellip;</td>
                     <td>{{ account.did }}</td>
                     <td>
                         {% if account.active %}
@@ -79,4 +79,76 @@
         <p>No accounts found!</p>
     {% endif %}
 </article>
+{% endblock %}
+
+{% block js %}
+<script>
+    (function () {
+        const BATCH_SIZE = {{ batch_size }};
+        const API_URL = "{% url 'account_infos_api' %}";
+        const rows = Array.from(document.querySelectorAll('tr[data-did]'));
+        const dids = rows.map(row => row.dataset.did);
+
+        if (!dids.length) {
+            return;
+        }
+
+        const rowsByDid = new Map(rows.map(row => [row.dataset.did, row]));
+
+        function markUnknown(row) {
+            const cell = row.querySelector('.account-handle');
+            if (!cell) return;
+            cell.textContent = 'unknown';
+            cell.removeAttribute('aria-busy');
+        }
+
+        function applyInfo(info) {
+            const row = rowsByDid.get(info.did);
+            if (!row) return;
+            const cell = row.querySelector('.account-handle');
+            if (!cell) return;
+            cell.textContent = info.handle || 'unknown';
+            cell.removeAttribute('aria-busy');
+        }
+
+        async function fetchBatch(batch) {
+            const params = new URLSearchParams();
+            batch.forEach(did => params.append('dids', did));
+
+            try {
+                const response = await fetch(`${API_URL}?${params.toString()}`, {
+                    credentials: 'same-origin',
+                    headers: { 'Accept': 'application/json' },
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                const data = await response.json();
+                const returned = new Set();
+                (data.infos || []).forEach(info => {
+                    returned.add(info.did);
+                    applyInfo(info);
+                });
+                batch.forEach(did => {
+                    if (!returned.has(did)) {
+                        const row = rowsByDid.get(did);
+                        if (row) markUnknown(row);
+                    }
+                });
+            } catch (err) {
+                console.error('Failed to load account infos:', err);
+                batch.forEach(did => {
+                    const row = rowsByDid.get(did);
+                    if (row) markUnknown(row);
+                });
+            }
+        }
+
+        (async () => {
+            for (let i = 0; i < dids.length; i += BATCH_SIZE) {
+                await fetchBatch(dids.slice(i, i + BATCH_SIZE));
+            }
+        })();
+    })();
+</script>
 {% endblock %}

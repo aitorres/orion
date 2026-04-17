@@ -7,7 +7,7 @@ from django.test import TestCase, override_settings
 from web.models import AuditLog, AuditLogEvent
 from web.utils import (
     delete_pds_account,
-    extend_with_account_info,
+    get_pds_account_batch_infos,
     get_pds_account_info,
     get_pds_accounts,
     get_pds_status,
@@ -335,6 +335,63 @@ class ChangePasswordViewTests(BaseViewTest):
 
 
 @override_settings(PDS_HOSTNAME="https://localhost", PDS_ADMIN_PASSWORD="admin")
+class AccountInfosApiViewTests(BaseViewTest):
+    """Tests for the account infos API view."""
+
+    def test_account_infos_requires_login(self):
+        """Test that the account infos API requires authentication."""
+        response = self.client.get("/api/account-infos/", {"dids": ["did:plc:123"]})
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/?next=/api/account-infos/", response.url)
+
+    def test_account_infos_rejects_non_get(self):
+        """Test that non-GET methods are rejected."""
+        self.authenticate()
+        response = self.client.post("/api/account-infos/", {"dids": ["did:plc:123"]})
+        self.assertEqual(response.status_code, 405)
+
+    def test_account_infos_no_dids_returns_empty(self):
+        """Test that missing dids param returns an empty infos list."""
+        self.authenticate()
+        response = self.client.get("/api/account-infos/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"infos": []})
+
+    def test_account_infos_exceeds_batch_size(self):
+        """Test that passing more than BATCH_SIZE DIDs returns 400."""
+        self.authenticate()
+        dids = [f"did:plc:{i}" for i in range(21)]
+        response = self.client.get("/api/account-infos/", {"dids": dids})
+        self.assertEqual(response.status_code, 400)
+
+    @patch("web.views.get_pds_account_batch_infos")
+    def test_account_infos_success(self, mock_batch: Mock):
+        """Test successful fetch returns infos as JSON."""
+        self.authenticate()
+        mock_batch.return_value = [
+            {"did": "did:plc:123", "handle": "alice.bsky.social"},
+            {"did": "did:plc:456", "handle": "bob.bsky.social"},
+        ]
+
+        response = self.client.get(
+            "/api/account-infos/",
+            {"dids": ["did:plc:123", "did:plc:456"]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "infos": [
+                    {"did": "did:plc:123", "handle": "alice.bsky.social"},
+                    {"did": "did:plc:456", "handle": "bob.bsky.social"},
+                ]
+            },
+        )
+        mock_batch.assert_called_once_with(["did:plc:123", "did:plc:456"])
+
+
+@override_settings(PDS_HOSTNAME="https://localhost", PDS_ADMIN_PASSWORD="admin")
 class UtilsTests(TestCase):
     """Tests for the utils module."""
 
@@ -369,22 +426,19 @@ class UtilsTests(TestCase):
 
         self.assertFalse(result)
 
-    @patch("web.utils.extend_with_account_info")
     @patch("web.utils.requests.get")
-    def test_get_pds_accounts_success(self, mock_get: Mock, mock_extend: Mock):
-        """Test get_pds_accounts returns list of accounts."""
+    def test_get_pds_accounts_success(self, mock_get: Mock):
+        """Test get_pds_accounts returns list of repos from listRepos."""
         mock_response = Mock()
         mock_response.json.return_value = {
             "repos": [{"did": "did:plc:123"}, {"did": "did:plc:456"}]
         }
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
-        mock_extend.return_value = [{"did": "did:plc:123", "handle": "user1"}]
 
         result = get_pds_accounts()
 
-        self.assertEqual(result, [{"did": "did:plc:123", "handle": "user1"}])
-        mock_extend.assert_called_once()
+        self.assertEqual(result, [{"did": "did:plc:123"}, {"did": "did:plc:456"}])
 
     @patch("web.utils.requests.get")
     def test_get_pds_accounts_request_exception(self, mock_get: Mock):
@@ -395,16 +449,15 @@ class UtilsTests(TestCase):
 
         self.assertEqual(result, [])
 
-    def test_extend_with_account_info_empty_repos(self):
-        """Test extend_with_account_info returns empty list for empty input."""
-        result = extend_with_account_info([])
+    def test_get_pds_account_batch_infos_empty(self):
+        """Test get_pds_account_batch_infos returns empty list for empty input."""
+        result = get_pds_account_batch_infos([])
 
         self.assertEqual(result, [])
 
     @patch("web.utils.requests.get")
-    def test_extend_with_account_info_success(self, mock_get: Mock):
-        """Test extend_with_account_info adds account details to repos."""
-        repos = [{"did": "did:plc:123"}, {"did": "did:plc:456"}]
+    def test_get_pds_account_batch_infos_success(self, mock_get: Mock):
+        """Test get_pds_account_batch_infos returns infos for a batch of DIDs."""
         mock_response = Mock()
         mock_response.json.return_value = {
             "infos": [
@@ -412,67 +465,56 @@ class UtilsTests(TestCase):
                     "did": "did:plc:123",
                     "handle": "alice.bsky.social",
                     "email": "alice@example.com",
-                    "createdAt": "2026-01-01T00:00:00Z",
                 },
                 {
                     "did": "did:plc:456",
                     "handle": "bob.bsky.social",
                     "email": "bob@example.com",
-                    "createdAt": "2026-02-01T00:00:00Z",
                 },
             ]
         }
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
-        result = extend_with_account_info(repos)
+        result = get_pds_account_batch_infos(["did:plc:123", "did:plc:456"])
 
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["handle"], "alice.bsky.social")
-        self.assertEqual(result[0]["email"], "alice@example.com")
         self.assertEqual(result[1]["handle"], "bob.bsky.social")
+        mock_get.assert_called_once_with(
+            "https://localhost/xrpc/com.atproto.admin.getAccountInfos",
+            auth=("admin", "admin"),
+            params=[("dids", "did:plc:123"), ("dids", "did:plc:456")],
+            timeout=10,
+        )
 
     @patch("web.utils.requests.get")
-    def test_extend_with_account_info_missing_account(self, mock_get: Mock):
-        """Test extend_with_account_info uses defaults for missing accounts."""
-        repos = [{"did": "did:plc:123"}]
+    def test_get_pds_account_batch_infos_missing_infos_key(self, mock_get: Mock):
+        """Test get_pds_account_batch_infos returns empty list if infos key missing."""
         mock_response = Mock()
-        mock_response.json.return_value = {"infos": []}
+        mock_response.json.return_value = {}
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
-        result = extend_with_account_info(repos)
+        result = get_pds_account_batch_infos(["did:plc:123"])
 
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["handle"], "unknown")
-        self.assertEqual(result[0]["email"], "unknown")
-        self.assertEqual(result[0]["indexedAt"], "unknown")
+        self.assertEqual(result, [])
 
     @patch("web.utils.requests.get")
-    def test_extend_with_account_info_request_exception(self, mock_get: Mock):
-        """Test extend_with_account_info handles request failure gracefully."""
-        repos = [{"did": "did:plc:123"}]
+    def test_get_pds_account_batch_infos_request_exception(self, mock_get: Mock):
+        """Test get_pds_account_batch_infos returns empty list on request failure."""
         mock_get.side_effect = requests.RequestException("Connection refused")
 
-        result = extend_with_account_info(repos)
+        result = get_pds_account_batch_infos(["did:plc:123"])
 
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["handle"], "unknown")
+        self.assertEqual(result, [])
 
-    @patch("web.utils.requests.get")
-    @patch("web.utils.BATCH_SIZE", 2)
-    def test_extend_with_account_info_batching(self, mock_get: Mock):
-        """Test extend_with_account_info batches large requests."""
-        repos = [{"did": f"did:plc:{i}"} for i in range(5)]
-        mock_response = Mock()
-        mock_response.json.return_value = {"infos": []}
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+    def test_get_pds_account_batch_infos_exceeds_batch_size(self):
+        """Test get_pds_account_batch_infos raises ValueError when over batch size."""
+        dids = [f"did:plc:{i}" for i in range(21)]
 
-        extend_with_account_info(repos)
-
-        # With batch size 2 and 5 DIDs, we should have 3 requests
-        self.assertEqual(mock_get.call_count, 3)
+        with self.assertRaises(ValueError):
+            get_pds_account_batch_infos(dids)
 
     @patch("web.utils.requests.get")
     def test_get_pds_account_info_success(self, mock_get: Mock):
