@@ -439,7 +439,7 @@ class UtilsTests(TestCase):
         result = get_pds_accounts()
 
         self.assertEqual(
-            result, [{"did": "did:plc:123", "order": 0}, {"did": "did:plc:456", "order": 1}]
+            result, [{"did": "did:plc:123", "order": 1}, {"did": "did:plc:456", "order": 2}]
         )
 
     @patch("web.utils.requests.get")

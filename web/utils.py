@@ -34,7 +34,7 @@ def get_pds_accounts() -> list[dict[str, Any]]:
         )
         response.raise_for_status()
         data = response.json()
-        return [{**repo, "order": idx} for idx, repo in enumerate(data["repos"])]
+        return [{**repo, "order": idx + 1} for idx, repo in enumerate(data["repos"])]
     except requests.RequestException as e:
         logging.exception("Failed to retrieve PDS accounts.", exc_info=e)
         return []
