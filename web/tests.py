@@ -438,7 +438,9 @@ class UtilsTests(TestCase):
 
         result = get_pds_accounts()
 
-        self.assertEqual(result, [{"did": "did:plc:123"}, {"did": "did:plc:456"}])
+        self.assertEqual(
+            result, [{"did": "did:plc:123", "order": 0}, {"did": "did:plc:456", "order": 1}]
+        )
 
     @patch("web.utils.requests.get")
     def test_get_pds_accounts_request_exception(self, mock_get: Mock):

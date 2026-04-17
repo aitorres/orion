@@ -84,7 +84,8 @@
         <table id="accounts-table" class="striped">
             <thead>
                 <tr>
-                    <th>Handle</th>
+                    <th>#</th>
+                    <th data-type="string">Handle</th>
                     <th>DID</th>
                     <th>Status</th>
                     {% if gatekeeper_enabled %}<th>2FA Status</th>{% endif %}
@@ -94,6 +95,7 @@
             <tbody>
                 {% for account in accounts %}
                 <tr data-did="{{ account.did }}">
+                    <td>{{ account.order }}</td>
                     <td class="account-handle" aria-busy="true">Loading&hellip;</td>
                     <td><a target="_blank" href="https://bsky.app/profile/{{ account.did }}">{{ account.did }}</a></td>
                     <td>
@@ -142,81 +144,90 @@
 
         const rows = Array.from(tableEl.querySelectorAll('tr[data-did]'));
         const dids = rows.map(row => row.dataset.did);
-
         if (!dids.length) return;
 
-        const rowsByDid = new Map(rows.map(row => [row.dataset.did, row]));
+        if (!window.simpleDatatables) return;
 
-        function markUnknown(row) {
-            const cell = row.querySelector('.account-handle');
-            if (!cell) return;
-            cell.textContent = 'unknown';
-            cell.removeAttribute('aria-busy');
-        }
+        // did -> resolved handle (once the API has responded for it).
+        const handlesByDid = new Map();
+        // Handle column index (resolved after construction).
+        let handleCol = 1;
 
-        function applyInfo(info) {
-            const row = rowsByDid.get(info.did);
+        const dt = new window.simpleDatatables.DataTable(tableEl, {
+            searchable: true,
+            sortable: true,
+            perPage: 25,
+            perPageSelect: [10, 25, 50, 100, ["All", -1]],
+            labels: {
+                placeholder: "Search accounts...",
+                perPage: "accounts per page",
+                noRows: "No accounts found",
+                info: "Showing {start} to {end} of {rows} accounts",
+            },
+        });
+
+        // Resolve the handle column index from the parsed headings.
+        const found = dt.data.headings.findIndex(h => {
+            const label = (h.text || (h.data != null ? String(h.data) : "")).trim().toLowerCase();
+            return label === "handle";
+        });
+        if (found >= 0) handleCol = found;
+
+        // DOM row order == dt.data.data order (rows parsed from tBodies[0]).
+        const indexByDid = new Map(dids.map((did, i) => [did, i]));
+
+        function recordHandle(did, handle) {
+            handlesByDid.set(did, handle);
+            const idx = indexByDid.get(did);
+            if (idx === undefined) return;
+            const row = dt.data.data[idx];
             if (!row) return;
-            const cell = row.querySelector('.account-handle');
+            const cell = row.cells[handleCol];
             if (!cell) return;
-            cell.textContent = info.handle || 'unknown';
-            cell.removeAttribute('aria-busy');
+            // Handle column is data-type="string", so cell.data is a plain
+            // string. Updating data/text/order keeps rendering, search, and
+            // sort all reading the resolved handle.
+            cell.data = handle;
+            cell.text = handle;
+            cell.order = handle;
+            if (cell.attributes && "aria-busy" in cell.attributes) {
+                delete cell.attributes["aria-busy"];
+            }
         }
 
         async function fetchBatch(batch) {
             const params = new URLSearchParams();
             batch.forEach(did => params.append('dids', did));
 
+            let infos = [];
             try {
                 const response = await fetch(`${API_URL}?${params.toString()}`, {
                     credentials: 'same-origin',
                     headers: { 'Accept': 'application/json' },
                 });
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const data = await response.json();
-                const returned = new Set();
-                (data.infos || []).forEach(info => {
-                    returned.add(info.did);
-                    applyInfo(info);
-                });
-                batch.forEach(did => {
-                    if (!returned.has(did)) {
-                        const row = rowsByDid.get(did);
-                        if (row) markUnknown(row);
-                    }
-                });
+                infos = data.infos || [];
             } catch (err) {
                 console.error('Failed to load account infos:', err);
-                batch.forEach(did => {
-                    const row = rowsByDid.get(did);
-                    if (row) markUnknown(row);
-                });
             }
-        }
 
-        function initDataTable() {
-            if (!window.simpleDatatables) return;
-            new window.simpleDatatables.DataTable(tableEl, {
-                searchable: true,
-                sortable: true,
-                perPage: 25,
-                perPageSelect: [10, 25, 50, 100, ["All", -1]],
-                labels: {
-                    placeholder: "Search accounts...",
-                    perPage: "accounts per page",
-                    noRows: "No accounts found",
-                    info: "Showing {start} to {end} of {rows} accounts",
-                },
+            const returned = new Set();
+            infos.forEach(info => {
+                returned.add(info.did);
+                recordHandle(info.did, info.handle || 'unknown');
             });
+            batch.forEach(did => {
+                if (!returned.has(did)) recordHandle(did, 'unknown');
+            });
+
+            dt.update();
         }
 
         (async () => {
             for (let i = 0; i < dids.length; i += BATCH_SIZE) {
                 await fetchBatch(dids.slice(i, i + BATCH_SIZE));
             }
-            initDataTable();
         })();
     })();
 </script>
