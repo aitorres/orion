@@ -37,6 +37,7 @@
                     <th>Handle</th>
                     <th>DID</th>
                     <th>Status</th>
+                    {% if gatekeeper_enabled %}<th>2FA Status</th>{% endif %}
                     <th>Actions</th>
                 </tr>
             </thead>
@@ -52,6 +53,15 @@
                             {{ account.status.title }}
                         {% endif %}
                     </td>
+                    {% if gatekeeper_enabled %}
+                    <td>
+                        {% if account.did in gatekeeper_dids %}
+                            Enabled
+                        {% else %}
+                            Disabled
+                        {% endif %}
+                    </td>
+                    {% endif %}
                     <td>
                         <a href="{% url 'account_action' account.did 'info' %}" role="button" class="secondary">Info</a>
                         {% if account.status == 'takendown' %}

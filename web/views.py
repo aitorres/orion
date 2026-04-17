@@ -1,5 +1,6 @@
 from typing import Callable
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model, logout
 from django.contrib.auth.decorators import login_required
@@ -15,6 +16,7 @@ from django.shortcuts import redirect, render
 from web.models import AuditLog, AuditLogEvent
 from web.utils import (
     delete_pds_account,
+    get_gatekeeper_required_dids,
     get_pds_account_info,
     get_pds_accounts,
     get_pds_status,
@@ -72,13 +74,19 @@ def dashboard_view(request: HttpRequest) -> HttpResponse:
     if not request.user.is_authenticated:
         return redirect("login")
 
+    context = {
+        "is_service_healthy": get_pds_status(),
+        "accounts": get_pds_accounts(),
+        "gatekeeper_enabled": settings.GATEKEEPER_ENABLED,
+    }
+
+    if settings.GATEKEEPER_ENABLED:
+        context["gatekeeper_dids"] = get_gatekeeper_required_dids()
+
     return render(
         request,
         "dashboard.html",
-        {
-            "is_service_healthy": get_pds_status(),
-            "accounts": get_pds_accounts(),
-        },
+        context,
     )
 
 

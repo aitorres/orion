@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 from datetime import datetime
 from typing import Any, Final
 
@@ -96,6 +97,24 @@ def get_pds_account_info(did: str) -> dict[str, Any] | None:
     except requests.RequestException as e:
         logging.exception("Failed to retrieve account info for DID %s.", did, exc_info=e)
         return None
+
+
+def get_gatekeeper_required_dids() -> set[str]:
+    """Query the gatekeeper database to get DIDs that have 2FA required/enabled."""
+
+    if not settings.GATEKEEPER_ENABLED or not settings.GATEKEEPER_DB_PATH:
+        return set()
+
+    try:
+        conn = sqlite3.connect(settings.GATEKEEPER_DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT did FROM two_factor_accounts WHERE required = 1")
+        rows = cursor.fetchall()
+        conn.close()
+        return {row[0] for row in rows}
+    except sqlite3.Error as e:
+        logging.exception("Failed to query gatekeeper database.", exc_info=e)
+        return set()
 
 
 def delete_pds_account(did: str) -> bool:

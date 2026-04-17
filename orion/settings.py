@@ -143,6 +143,10 @@ STATICFILES_DIRS = [
 
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
+# Gatekeeper (2FA) database settings
+GATEKEEPER_DB_PATH: str | None = os.environ.get("GATEKEEPER_DB_PATH")
+GATEKEEPER_ENABLED: bool = GATEKEEPER_DB_PATH is not None
+
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SECURE_REDIRECT_EXEMPT = [r"^health/$"]
