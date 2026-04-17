@@ -1,6 +1,56 @@
 {% extends "_base.html" %}
 {% block title %}Dashboard{% endblock %}
 
+{% block css %}
+<link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/simple-datatables@9.0.3/dist/style.min.css"
+    >
+<style>
+    /* Blend simple-datatables controls with Pico */
+    .datatable-wrapper .datatable-top,
+    .datatable-wrapper .datatable-bottom {
+        padding: 0.5rem 0;
+    }
+    .datatable-wrapper .datatable-input,
+    .datatable-wrapper .datatable-selector {
+        margin: 0 0.25rem;
+    }
+    /* Align all header cells vertically so non-sortable headers line up */
+    .datatable-wrapper thead > tr > th {
+        vertical-align: middle;
+    }
+    /* Make sort arrows clearly visible (override library defaults) */
+    .datatable-wrapper .datatable-sorter {
+        padding-right: 1.25rem;
+    }
+    .datatable-wrapper .datatable-sorter::before,
+    .datatable-wrapper .datatable-sorter::after {
+        right: 0.25rem;
+        border-left: 6px solid transparent;
+        border-right: 6px solid transparent;
+        opacity: 0.5;
+    }
+    .datatable-wrapper .datatable-sorter::before {
+        border-top: 7px solid currentColor;
+        bottom: calc(50% - 9px);
+    }
+    .datatable-wrapper .datatable-sorter::after {
+        border-bottom: 7px solid currentColor;
+        border-top: 7px solid transparent;
+        top: calc(50% - 9px);
+    }
+    .datatable-wrapper .datatable-sorter:hover::before,
+    .datatable-wrapper .datatable-sorter:hover::after {
+        opacity: 0.75;
+    }
+    .datatable-wrapper .datatable-ascending .datatable-sorter::after,
+    .datatable-wrapper .datatable-descending .datatable-sorter::before {
+        opacity: 1;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <article>
     <header>
@@ -31,21 +81,21 @@
     </header>
     {% if accounts %}
         <p>There are {{ accounts|length }} accounts (repos) in the PDS.</p>
-        <table class="striped">
+        <table id="accounts-table" class="striped">
             <thead>
                 <tr>
                     <th>Handle</th>
                     <th>DID</th>
                     <th>Status</th>
                     {% if gatekeeper_enabled %}<th>2FA Status</th>{% endif %}
-                    <th>Actions</th>
+                    <th data-sortable="false" data-searchable="false">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for account in accounts %}
                 <tr data-did="{{ account.did }}">
                     <td class="account-handle" aria-busy="true">Loading&hellip;</td>
-                    <td>{{ account.did }}</td>
+                    <td><a target="_blank" href="https://bsky.app/profile/{{ account.did }}">{{ account.did }}</a></td>
                     <td>
                         {% if account.active %}
                             Active
@@ -82,16 +132,18 @@
 {% endblock %}
 
 {% block js %}
+<script src="https://cdn.jsdelivr.net/npm/simple-datatables@9.0.3/dist/umd/simple-datatables.min.js"></script>
 <script>
     (function () {
         const BATCH_SIZE = {{ batch_size }};
         const API_URL = "{% url 'account_infos_api' %}";
-        const rows = Array.from(document.querySelectorAll('tr[data-did]'));
+        const tableEl = document.getElementById('accounts-table');
+        if (!tableEl) return;
+
+        const rows = Array.from(tableEl.querySelectorAll('tr[data-did]'));
         const dids = rows.map(row => row.dataset.did);
 
-        if (!dids.length) {
-            return;
-        }
+        if (!dids.length) return;
 
         const rowsByDid = new Map(rows.map(row => [row.dataset.did, row]));
 
@@ -144,10 +196,27 @@
             }
         }
 
+        function initDataTable() {
+            if (!window.simpleDatatables) return;
+            new window.simpleDatatables.DataTable(tableEl, {
+                searchable: true,
+                sortable: true,
+                perPage: 25,
+                perPageSelect: [10, 25, 50, 100, ["All", -1]],
+                labels: {
+                    placeholder: "Search accounts...",
+                    perPage: "accounts per page",
+                    noRows: "No accounts found",
+                    info: "Showing {start} to {end} of {rows} accounts",
+                },
+            });
+        }
+
         (async () => {
             for (let i = 0; i < dids.length; i += BATCH_SIZE) {
                 await fetchBatch(dids.slice(i, i + BATCH_SIZE));
             }
+            initDataTable();
         })();
     })();
 </script>
