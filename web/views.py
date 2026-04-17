@@ -155,6 +155,7 @@ def account_action_view(request: HttpRequest, did: str, action: str) -> HttpResp
                 "did": did,
                 "action": action,
                 "account_info": info,
+                "has_enabled_2fa": did in get_gatekeeper_required_dids(),
             },
         )
 
