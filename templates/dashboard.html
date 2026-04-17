@@ -48,6 +48,22 @@
     .datatable-wrapper .datatable-descending .datatable-sorter::before {
         opacity: 1;
     }
+    /* Compact action buttons so the accounts table fits without overflow */
+    #accounts-table td .actions-cell {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+    }
+    #accounts-table td [role="button"] {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.8rem;
+        margin: 0;
+    }
+    /* Shrink the DID column (long monospace-ish strings) */
+    #accounts-table td a[href*="bsky.app"] {
+        font-size: 0.85rem;
+        word-break: break-all;
+    }
 </style>
 {% endblock %}
 
@@ -115,6 +131,7 @@
                     </td>
                     {% endif %}
                     <td>
+                        <div class="actions-cell">
                         <a href="{% url 'account_action' account.did 'info' %}" role="button" class="secondary">Info</a>
                         {% if account.status == 'takendown' %}
                             <a href="{% url 'account_action' account.did 'untakedown' %}" role="button" class="secondary">Untakedown</a>
@@ -122,6 +139,7 @@
                             <a href="{% url 'account_action' account.did 'takedown' %}" role="button" class="secondary">Takedown</a>
                         {% endif %}
                         <a href="{% url 'account_action' account.did 'delete' %}" role="button" class="secondary">Delete</a>
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}
