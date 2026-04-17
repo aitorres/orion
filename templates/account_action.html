@@ -13,7 +13,7 @@
         <li><strong>DID:</strong> <a href="https://bsky.app/profile/{{ account_info.did }}" target="_blank">{{ account_info.did }}</a></li>
         <li><strong>Handle:</strong> {{ account_info.handle }}</li>
         <li><strong>Email:</strong> {{ account_info.email }}</li>
-        <li><strong>2FA Status:</strong> {% if has_2fa_enabled %}Enabled{% else %}Disabled{% endif %}</li>
+        <li><strong>2FA Status:</strong> {% if has_enabled_2fa %}Enabled{% else %}Disabled{% endif %}</li>
         <li><strong>Indexed at:</strong> {{ account_info.indexedAt }}</li>
         <li>(<a href="https://bsky.app/profile/{{ account_info.did }}" target="_blank">View on Bluesky</a> / <a href="https://pds.ls/at://{{ account_info.did }}" target="_blank">View on PDSLS</a>)</li>
     </ul>
