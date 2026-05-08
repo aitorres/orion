@@ -179,8 +179,9 @@
         const handlesByDid = new Map();
         // did -> appview suspended status (true/false/null).
         const appviewStatusByDid = new Map();
-        // Handle column index (resolved after construction).
+        // Column indexes resolved after datatable construction.
         let handleCol = 1;
+        let appviewCol = 4;
 
         const dt = new window.simpleDatatables.DataTable(tableEl, {
             searchable: true,
@@ -195,12 +196,20 @@
             },
         });
 
-        // Resolve the handle column index from the parsed headings.
-        const found = dt.data.headings.findIndex(h => {
-            const label = (h.text || (h.data != null ? String(h.data) : "")).trim().toLowerCase();
-            return label === "handle";
-        });
-        if (found >= 0) handleCol = found;
+        function findColumnIndex(columnName) {
+            return dt.data.headings.findIndex(h => {
+                const label = (h.text || (h.data != null ? String(h.data) : ""))
+                    .trim()
+                    .toLowerCase();
+                return label === columnName;
+            });
+        }
+
+        // Resolve column indexes from the parsed headings.
+        const foundHandle = findColumnIndex('handle');
+        if (foundHandle >= 0) handleCol = foundHandle;
+        const foundAppView = findColumnIndex('appview status');
+        if (foundAppView >= 0) appviewCol = foundAppView;
 
         // DOM row order == dt.data.data order (rows parsed from tBodies[0]).
         const indexByDid = new Map(dids.map((did, i) => [did, i]));
@@ -296,6 +305,25 @@
 
         function recordAppViewStatus(did, appviewSuspended) {
             appviewStatusByDid.set(did, appviewSuspended ?? null);
+            const idx = indexByDid.get(did);
+            if (idx !== undefined) {
+                const row = dt.data.data[idx];
+                const cell = row && row.cells ? row.cells[appviewCol] : null;
+                const label = appviewSuspended === true
+                    ? 'Suspended'
+                    : appviewSuspended === false
+                        ? 'Active'
+                        : 'Unknown';
+
+                if (cell) {
+                    cell.data = label;
+                    cell.text = label;
+                    cell.order = label;
+                    if (cell.attributes && "aria-busy" in cell.attributes) {
+                        delete cell.attributes["aria-busy"];
+                    }
+                }
+            }
             updateAppViewDom(did, appviewSuspended);
         }
 
