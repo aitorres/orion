@@ -270,7 +270,7 @@ def export_accounts_csv_view(request: HttpRequest) -> HttpResponse:
                 "handle": info.get("handle", "unknown"),
                 "2fa_status": "Enabled" if did in gatekeeper_dids else "Disabled",
                 "email": info.get("email", ""),
-                "account_status": (
+                "pds_status": (
                     "Active" if account.get("active") else account.get("status", "unknown")
                 ),
                 "appview_status": (

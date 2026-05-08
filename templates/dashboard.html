@@ -7,6 +7,14 @@
     href="https://cdn.jsdelivr.net/npm/simple-datatables@9.0.3/dist/style.min.css"
     >
 <style>
+    #accounts-table {
+        font-size: 0.85rem;
+    }
+    #accounts-table th,
+    #accounts-table td {
+        padding: 0.45rem 0.55rem;
+        line-height: 1.25;
+    }
     /* Blend simple-datatables controls with Pico */
     .datatable-wrapper .datatable-top,
     .datatable-wrapper .datatable-bottom {
@@ -61,7 +69,7 @@
     }
     /* Shrink the DID column (long monospace-ish strings) */
     #accounts-table td a[href*="bsky.app"] {
-        font-size: 0.85rem;
+        font-size: 0.8rem;
         word-break: break-all;
     }
 </style>
@@ -104,7 +112,8 @@
                     <th>#</th>
                     <th data-type="string">Handle</th>
                     <th>DID</th>
-                    <th>Status</th>
+                    <th>PDS Status</th>
+                    <th>AppView Status</th>
                     {% if gatekeeper_enabled %}<th>2FA Status</th>{% endif %}
                     <th data-sortable="false" data-searchable="false">Actions</th>
                 </tr>
@@ -116,8 +125,10 @@
                     <td class="account-handle" aria-busy="true">Loading&hellip;</td>
                     <td><a target="_blank" href="https://bsky.app/profile/{{ account.did }}">{{ account.did }}</a></td>
                     <td class="account-status" data-base-status="{% if account.active %}Active{% else %}{{ account.status.title }}{% endif %}">
-                        <span class="pds-status">{% if account.active %}Active{% else %}{{ account.status.title }}{% endif %}</span><br>
-                        <small class="appview-status" aria-busy="true">AppView: checking&hellip;</small>
+                        <span class="pds-status">{% if account.active %}Active{% else %}{{ account.status.title }}{% endif %}</span>
+                    </td>
+                    <td>
+                        <span class="appview-status" aria-busy="true">Checking&hellip;</span>
                     </td>
                     {% if gatekeeper_enabled %}
                     <td>
@@ -222,11 +233,11 @@
             if (!statusEl) return;
 
             if (appviewSuspended === true) {
-                statusEl.textContent = 'AppView: suspended';
+                statusEl.textContent = 'Suspended';
             } else if (appviewSuspended === false) {
-                statusEl.textContent = 'AppView: active';
+                statusEl.textContent = 'Active';
             } else {
-                statusEl.textContent = 'AppView: unknown';
+                statusEl.textContent = 'Unknown';
             }
 
             statusEl.removeAttribute('aria-busy');
@@ -252,11 +263,11 @@
                     const statusEl = row.querySelector('.appview-status');
                     if (!statusEl) return;
                     if (appviewSuspended === true) {
-                        statusEl.textContent = 'AppView: suspended';
+                        statusEl.textContent = 'Suspended';
                     } else if (appviewSuspended === false) {
-                        statusEl.textContent = 'AppView: active';
+                        statusEl.textContent = 'Active';
                     } else {
-                        statusEl.textContent = 'AppView: unknown';
+                        statusEl.textContent = 'Unknown';
                     }
                     statusEl.removeAttribute('aria-busy');
                 }
