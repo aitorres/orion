@@ -166,6 +166,8 @@
 
         // did -> resolved handle (once the API has responded for it).
         const handlesByDid = new Map();
+        // did -> appview suspended status (true/false/null).
+        const appviewStatusByDid = new Map();
         // Handle column index (resolved after construction).
         let handleCol = 1;
 
@@ -192,6 +194,75 @@
         // DOM row order == dt.data.data order (rows parsed from tBodies[0]).
         const indexByDid = new Map(dids.map((did, i) => [did, i]));
 
+        function getDidFromRow(rowEl) {
+            if (!rowEl) return null;
+            if (rowEl.dataset && rowEl.dataset.did) return rowEl.dataset.did;
+            const link = rowEl.querySelector('a[href*="bsky.app/profile/"]');
+            if (!link) return null;
+            const href = link.getAttribute('href') || '';
+            const marker = '/profile/';
+            const pos = href.indexOf(marker);
+            if (pos < 0) return null;
+            return href.slice(pos + marker.length);
+        }
+
+        function updateHandleDom(did, handle) {
+            const row = tableEl.querySelector(`tr[data-did="${did}"]`);
+            if (!row) return;
+            const handleEl = row.querySelector('.account-handle');
+            if (!handleEl) return;
+            handleEl.textContent = handle;
+            handleEl.removeAttribute('aria-busy');
+        }
+
+        function updateAppViewDom(did, appviewSuspended) {
+            const row = tableEl.querySelector(`tr[data-did="${did}"]`);
+            if (!row) return;
+            const statusEl = row.querySelector('.appview-status');
+            if (!statusEl) return;
+
+            if (appviewSuspended === true) {
+                statusEl.textContent = 'AppView: suspended';
+            } else if (appviewSuspended === false) {
+                statusEl.textContent = 'AppView: active';
+            } else {
+                statusEl.textContent = 'AppView: unknown';
+            }
+
+            statusEl.removeAttribute('aria-busy');
+        }
+
+        function rehydrateVisibleRows() {
+            const visibleRows = Array.from(tableEl.querySelectorAll('tbody tr'));
+            visibleRows.forEach(row => {
+                const did = getDidFromRow(row);
+                if (!did) return;
+
+                if (handlesByDid.has(did)) {
+                    const handle = handlesByDid.get(did);
+                    const handleEl = row.querySelector('.account-handle');
+                    if (handleEl && handle != null) {
+                        handleEl.textContent = handle;
+                        handleEl.removeAttribute('aria-busy');
+                    }
+                }
+
+                if (appviewStatusByDid.has(did)) {
+                    const appviewSuspended = appviewStatusByDid.get(did);
+                    const statusEl = row.querySelector('.appview-status');
+                    if (!statusEl) return;
+                    if (appviewSuspended === true) {
+                        statusEl.textContent = 'AppView: suspended';
+                    } else if (appviewSuspended === false) {
+                        statusEl.textContent = 'AppView: active';
+                    } else {
+                        statusEl.textContent = 'AppView: unknown';
+                    }
+                    statusEl.removeAttribute('aria-busy');
+                }
+            });
+        }
+
         function recordHandle(did, handle) {
             handlesByDid.set(did, handle);
             const idx = indexByDid.get(did);
@@ -209,23 +280,12 @@
             if (cell.attributes && "aria-busy" in cell.attributes) {
                 delete cell.attributes["aria-busy"];
             }
+            updateHandleDom(did, handle);
         }
 
         function recordAppViewStatus(did, appviewSuspended) {
-            const row = tableEl.querySelector(`tr[data-did="${did}"]`);
-            if (!row) return;
-            const statusEl = row.querySelector('.appview-status');
-            if (!statusEl) return;
-
-            if (appviewSuspended === true) {
-                statusEl.textContent = 'AppView: suspended';
-            } else if (appviewSuspended === false) {
-                statusEl.textContent = 'AppView: active';
-            } else {
-                statusEl.textContent = 'AppView: unknown';
-            }
-
-            statusEl.removeAttribute('aria-busy');
+            appviewStatusByDid.set(did, appviewSuspended ?? null);
+            updateAppViewDom(did, appviewSuspended);
         }
 
         async function fetchBatch(batch) {
@@ -259,12 +319,28 @@
             });
 
             dt.update();
+            rehydrateVisibleRows();
         }
+
+        const refreshEvents = [
+            'datatable.search',
+            'datatable.sort',
+            'datatable.page',
+            'datatable.perpage',
+            'datatable.update',
+            'datatable.refresh',
+        ];
+        refreshEvents.forEach(eventName => {
+            dt.on(eventName, () => {
+                requestAnimationFrame(rehydrateVisibleRows);
+            });
+        });
 
         (async () => {
             for (let i = 0; i < dids.length; i += BATCH_SIZE) {
                 await fetchBatch(dids.slice(i, i + BATCH_SIZE));
             }
+            rehydrateVisibleRows();
         })();
     })();
 </script>
