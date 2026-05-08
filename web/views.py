@@ -248,7 +248,15 @@ def export_accounts_csv_view(request: HttpRequest) -> HttpResponse:
     response["Content-Disposition"] = "attachment; filename=accounts_export.csv"
 
     writer = csv.DictWriter(
-        response, fieldnames=["did", "handle", "2fa_status", "email", "account_status"]
+        response,
+        fieldnames=[
+            "did",
+            "handle",
+            "2fa_status",
+            "email",
+            "account_status",
+            "appview_status",
+        ],
     )
     writer.writeheader()
 
@@ -264,6 +272,11 @@ def export_accounts_csv_view(request: HttpRequest) -> HttpResponse:
                 "email": info.get("email", ""),
                 "account_status": (
                     "Active" if account.get("active") else account.get("status", "unknown")
+                ),
+                "appview_status": (
+                    "Suspended"
+                    if info.get("appview_suspended") is True
+                    else "Active" if info.get("appview_suspended") is False else "Unknown"
                 ),
             }
         )

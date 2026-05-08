@@ -115,12 +115,9 @@
                     <td>{{ account.order }}</td>
                     <td class="account-handle" aria-busy="true">Loading&hellip;</td>
                     <td><a target="_blank" href="https://bsky.app/profile/{{ account.did }}">{{ account.did }}</a></td>
-                    <td>
-                        {% if account.active %}
-                            Active
-                        {% else %}
-                            {{ account.status.title }}
-                        {% endif %}
+                    <td class="account-status" data-base-status="{% if account.active %}Active{% else %}{{ account.status.title }}{% endif %}">
+                        <span class="pds-status">{% if account.active %}Active{% else %}{{ account.status.title }}{% endif %}</span><br>
+                        <small class="appview-status" aria-busy="true">AppView: checking&hellip;</small>
                     </td>
                     {% if gatekeeper_enabled %}
                     <td>
@@ -214,6 +211,23 @@
             }
         }
 
+        function recordAppViewStatus(did, appviewSuspended) {
+            const row = tableEl.querySelector(`tr[data-did="${did}"]`);
+            if (!row) return;
+            const statusEl = row.querySelector('.appview-status');
+            if (!statusEl) return;
+
+            if (appviewSuspended === true) {
+                statusEl.textContent = 'AppView: suspended';
+            } else if (appviewSuspended === false) {
+                statusEl.textContent = 'AppView: active';
+            } else {
+                statusEl.textContent = 'AppView: unknown';
+            }
+
+            statusEl.removeAttribute('aria-busy');
+        }
+
         async function fetchBatch(batch) {
             const params = new URLSearchParams();
             batch.forEach(did => params.append('dids', did));
@@ -235,9 +249,13 @@
             infos.forEach(info => {
                 returned.add(info.did);
                 recordHandle(info.did, info.handle || 'unknown');
+                recordAppViewStatus(info.did, info.appview_suspended);
             });
             batch.forEach(did => {
-                if (!returned.has(did)) recordHandle(did, 'unknown');
+                if (!returned.has(did)) {
+                    recordHandle(did, 'unknown');
+                    recordAppViewStatus(did, null);
+                }
             });
 
             dt.update();

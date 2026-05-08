@@ -334,7 +334,11 @@ class ChangePasswordViewTests(BaseViewTest):
         self.assertEqual(log.user.username, "testuser")
 
 
-@override_settings(PDS_HOSTNAME="https://localhost", PDS_ADMIN_PASSWORD="admin")
+@override_settings(
+    PDS_HOSTNAME="https://localhost",
+    PDS_ADMIN_PASSWORD="admin",
+    APPVIEW_HOSTNAME="https://api.bsky.localhost",
+)
 class AccountInfosApiViewTests(BaseViewTest):
     """Tests for the account infos API view."""
 
@@ -391,7 +395,11 @@ class AccountInfosApiViewTests(BaseViewTest):
         mock_batch.assert_called_once_with(["did:plc:123", "did:plc:456"])
 
 
-@override_settings(PDS_HOSTNAME="https://localhost", PDS_ADMIN_PASSWORD="admin")
+@override_settings(
+    PDS_HOSTNAME="https://localhost",
+    PDS_ADMIN_PASSWORD="admin",
+    APPVIEW_HOSTNAME="https://api.bsky.localhost",
+)
 class UtilsTests(TestCase):
     """Tests for the utils module."""
 
@@ -476,17 +484,33 @@ class UtilsTests(TestCase):
             ]
         }
         mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+
+        mock_appview_response = Mock()
+        mock_appview_response.json.return_value = {
+            "profiles": [
+                {"did": "did:plc:123"},
+            ]
+        }
+        mock_appview_response.raise_for_status = Mock()
+        mock_get.side_effect = [mock_response, mock_appview_response]
 
         result = get_pds_account_batch_infos(["did:plc:123", "did:plc:456"])
 
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["handle"], "alice.bsky.social")
         self.assertEqual(result[1]["handle"], "bob.bsky.social")
-        mock_get.assert_called_once_with(
+        self.assertEqual(result[0]["appview_suspended"], False)
+        self.assertEqual(result[1]["appview_suspended"], True)
+        self.assertEqual(mock_get.call_count, 2)
+        mock_get.assert_any_call(
             "https://localhost/xrpc/com.atproto.admin.getAccountInfos",
             auth=("admin", "admin"),
             params=[("dids", "did:plc:123"), ("dids", "did:plc:456")],
+            timeout=10,
+        )
+        mock_get.assert_any_call(
+            "https://api.bsky.localhost/xrpc/app.bsky.actor.getProfiles",
+            params=[("actors", "did:plc:123"), ("actors", "did:plc:456")],
             timeout=10,
         )
 
@@ -528,7 +552,11 @@ class UtilsTests(TestCase):
             "email": "alice@example.com",
         }
         mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+
+        mock_appview_response = Mock()
+        mock_appview_response.json.return_value = {"profiles": [{"did": "did:plc:123"}]}
+        mock_appview_response.raise_for_status = Mock()
+        mock_get.side_effect = [mock_response, mock_appview_response]
 
         result = get_pds_account_info("did:plc:123")
 
@@ -538,12 +566,19 @@ class UtilsTests(TestCase):
                 "did": "did:plc:123",
                 "handle": "alice.bsky.social",
                 "email": "alice@example.com",
+                "appview_suspended": False,
             },
         )
-        mock_get.assert_called_once_with(
+        self.assertEqual(mock_get.call_count, 2)
+        mock_get.assert_any_call(
             "https://localhost/xrpc/com.atproto.admin.getAccountInfo",
             auth=("admin", "admin"),
             params={"did": "did:plc:123"},
+            timeout=10,
+        )
+        mock_get.assert_any_call(
+            "https://api.bsky.localhost/xrpc/app.bsky.actor.getProfiles",
+            params=[("actors", "did:plc:123")],
             timeout=10,
         )
 
