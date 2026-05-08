@@ -2,6 +2,7 @@ from unittest.mock import Mock, patch
 
 import requests
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 
 from web.models import AuditLog, AuditLogEvent
@@ -22,6 +23,7 @@ class BaseViewTest(TestCase):
     def setUp(self):
         """Set up test environment."""
 
+        cache.clear()
         User = get_user_model()
         User.objects.create_user(username="testuser", password="testpass")
 
@@ -402,6 +404,9 @@ class AccountInfosApiViewTests(BaseViewTest):
 )
 class UtilsTests(TestCase):
     """Tests for the utils module."""
+
+    def setUp(self):
+        cache.clear()
 
     @patch("web.utils.requests.get")
     def test_get_pds_status_success(self, mock_get: Mock):

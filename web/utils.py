@@ -5,26 +5,51 @@ from typing import Any, Final
 
 import requests
 from django.conf import settings
+from django.core.cache import cache
 
 REQUESTS_TIMEOUT_IN_SECONDS: Final[int] = 10
 BATCH_SIZE: Final[int] = 20
 
+# Short TTL for the health check; longer for everything else.
+HEALTH_CACHE_TTL_SECONDS: Final[int] = 30
 
-def get_pds_status() -> bool:
-    """Check the status of the PDS service."""
+
+def _cache_ttl() -> int:
+    """Return the configured TTL for upstream lookups, with a sane default."""
+
+    return int(getattr(settings, "ORION_UPSTREAM_CACHE_TTL", 300))
+
+
+def get_pds_status(use_cache: bool = True) -> bool:
+    """Check the status of the PDS service (cached for a short period)."""
+
+    cache_key = "orion:pds:status"
+    if use_cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
 
     try:
         response = requests.get(
             f"{settings.PDS_HOSTNAME}/xrpc/_health", timeout=REQUESTS_TIMEOUT_IN_SECONDS
         )
-        return response.status_code == 200
+        ok = response.status_code == 200
     except requests.RequestException as e:
         logging.exception("Failed to connect to PDS service for health check.", exc_info=e)
-        return False
+        ok = False
+
+    cache.set(cache_key, ok, HEALTH_CACHE_TTL_SECONDS)
+    return ok
 
 
-def get_pds_accounts() -> list[dict[str, Any]]:
+def get_pds_accounts(use_cache: bool = True) -> list[dict[str, Any]]:
     """Retrieve a list of PDS repos (DIDs and status only)."""
+
+    cache_key = "orion:pds:accounts"
+    if use_cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
 
     try:
         response = requests.get(
@@ -33,17 +58,26 @@ def get_pds_accounts() -> list[dict[str, Any]]:
         )
         response.raise_for_status()
         data = response.json()
-        return [{**repo, "order": idx + 1} for idx, repo in enumerate(data["repos"])]
+        accounts = [{**repo, "order": idx + 1} for idx, repo in enumerate(data["repos"])]
     except requests.RequestException as e:
         logging.exception("Failed to retrieve PDS accounts.", exc_info=e)
         return []
 
+    cache.set(cache_key, accounts, _cache_ttl())
+    return accounts
 
-def get_appview_visible_dids(dids: list[str]) -> set[str] | None:
+
+def get_appview_visible_dids(dids: list[str], use_cache: bool = True) -> set[str] | None:
     """Return DIDs that are visible on AppView; ``None`` if lookup fails."""
 
     if not dids:
         return set()
+
+    cache_key = f"orion:appview:visible:{hash(tuple(sorted(dids)))}"
+    if use_cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
 
     try:
         response = requests.get(
@@ -54,7 +88,7 @@ def get_appview_visible_dids(dids: list[str]) -> set[str] | None:
         response.raise_for_status()
         data = response.json()
         profiles = data.get("profiles", [])
-        return {
+        visible = {
             did
             for profile in profiles
             if isinstance(profile, dict)
@@ -64,6 +98,9 @@ def get_appview_visible_dids(dids: list[str]) -> set[str] | None:
     except requests.RequestException as e:
         logging.exception("Failed to retrieve appview profile batch.", exc_info=e)
         return None
+
+    cache.set(cache_key, visible, _cache_ttl())
+    return visible
 
 
 def _with_appview_status(infos: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -85,7 +122,9 @@ def _with_appview_status(infos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return infos
 
 
-def get_pds_account_batch_infos(dids: list[str]) -> list[dict[str, Any]]:
+def get_pds_account_batch_infos(
+    dids: list[str], use_cache: bool = True
+) -> list[dict[str, Any]]:
     """Retrieve account infos for a single batch of DIDs."""
 
     if len(dids) > BATCH_SIZE:
@@ -99,6 +138,12 @@ def get_pds_account_batch_infos(dids: list[str]) -> list[dict[str, Any]]:
     if not dids:
         return []
 
+    cache_key = f"orion:pds:batch_infos:{hash(tuple(sorted(dids)))}"
+    if use_cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     try:
         response = requests.get(
             f"{settings.PDS_HOSTNAME}/xrpc/com.atproto.admin.getAccountInfos",
@@ -109,10 +154,13 @@ def get_pds_account_batch_infos(dids: list[str]) -> list[dict[str, Any]]:
         response.raise_for_status()
         data = response.json()
         infos = data.get("infos", [])
-        return _with_appview_status(infos)
+        infos = _with_appview_status(infos)
     except requests.RequestException as e:
         logging.exception("Failed to retrieve account infos from PDS.", exc_info=e)
         return []
+
+    cache.set(cache_key, infos, _cache_ttl())
+    return infos
 
 
 def get_pds_account_info(did: str) -> dict[str, Any] | None:
@@ -135,11 +183,17 @@ def get_pds_account_info(did: str) -> dict[str, Any] | None:
         return None
 
 
-def get_gatekeeper_required_dids() -> set[str]:
+def get_gatekeeper_required_dids(use_cache: bool = True) -> set[str]:
     """Query the gatekeeper database to get DIDs that have 2FA required/enabled."""
 
     if not settings.GATEKEEPER_ENABLED or not settings.GATEKEEPER_DB_PATH:
         return set()
+
+    cache_key = "orion:gatekeeper:required_dids"
+    if use_cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
 
     try:
         conn = sqlite3.connect(settings.GATEKEEPER_DB_PATH)
@@ -147,10 +201,106 @@ def get_gatekeeper_required_dids() -> set[str]:
         cursor.execute("SELECT did FROM two_factor_accounts WHERE required = 1")
         rows = cursor.fetchall()
         conn.close()
-        return {row[0] for row in rows}
+        result = {row[0] for row in rows}
     except sqlite3.Error as e:
         logging.exception("Failed to query gatekeeper database.", exc_info=e)
         return set()
+
+    cache.set(cache_key, result, _cache_ttl())
+    return result
+
+
+def _format_pds_status(account: dict[str, Any]) -> str:
+    """Render an account's PDS status from the listRepos payload."""
+
+    if account.get("active"):
+        return "Active"
+    status = account.get("status")
+    if isinstance(status, str):
+        return status.title()
+    return "Unknown"
+
+
+_APPVIEW_STATUS_LABELS: Final[dict[Any, str]] = {
+    True: "Suspended",
+    False: "Active",
+}
+
+
+def _format_appview_status(info: dict[str, Any]) -> str:
+    """Render an account's AppView status from a PDS info payload."""
+
+    return _APPVIEW_STATUS_LABELS.get(info.get("appview_suspended"), "Unknown")
+
+
+def _build_info_by_did(dids: list[str], use_cache: bool) -> dict[str, dict[str, Any]]:
+    """Fetch and index PDS account infos for the given DIDs."""
+
+    info_by_did: dict[str, dict[str, Any]] = {}
+    for i in range(0, len(dids), BATCH_SIZE):
+        batch = dids[i : i + BATCH_SIZE]
+        for info in get_pds_account_batch_infos(batch, use_cache=use_cache):
+            did = info.get("did")
+            if isinstance(did, str):
+                info_by_did[did] = info
+    return info_by_did
+
+
+def get_enriched_accounts(use_cache: bool = True) -> list[dict[str, Any]]:
+    """Return the fully-resolved account rows used by the dashboard table.
+
+    Each row contains everything the frontend needs to render the table:
+    order, did, handle, pds_status, appview_status and (optionally) 2FA status.
+    The result is cached as a single blob so repeated dashboard loads served
+    by the data API stay cheap.
+    """
+
+    cache_key = "orion:dashboard:enriched_accounts"
+    if use_cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    accounts = get_pds_accounts(use_cache=use_cache)
+    if not accounts:
+        cache.set(cache_key, [], _cache_ttl())
+        return []
+
+    dids = [acc["did"] for acc in accounts if acc.get("did")]
+    info_by_did = _build_info_by_did(dids, use_cache=use_cache)
+
+    gatekeeper_dids: set[str] = (
+        get_gatekeeper_required_dids(use_cache=use_cache)
+        if settings.GATEKEEPER_ENABLED
+        else set()
+    )
+
+    rows: list[dict[str, Any]] = []
+    for account in accounts:
+        did = account.get("did", "")
+        info = info_by_did.get(did, {})
+
+        row: dict[str, Any] = {
+            "order": account.get("order"),
+            "did": did,
+            "handle": info.get("handle") or "unknown",
+            "pds_status": _format_pds_status(account),
+            "appview_status": _format_appview_status(info),
+        }
+        if settings.GATEKEEPER_ENABLED:
+            row["twofa_status"] = "Enabled" if did in gatekeeper_dids else "Disabled"
+        rows.append(row)
+
+    cache.set(cache_key, rows, _cache_ttl())
+    return rows
+
+
+def invalidate_dashboard_cache() -> None:
+    """Drop the cached dashboard data so the next load re-fetches from upstream."""
+
+    cache.delete("orion:dashboard:enriched_accounts")
+    cache.delete("orion:pds:accounts")
+    cache.delete("orion:gatekeeper:required_dids")
 
 
 def delete_pds_account(did: str) -> bool:
@@ -165,6 +315,7 @@ def delete_pds_account(did: str) -> bool:
         )
         response.raise_for_status()
         logging.info("Successfully deleted PDS account with DID %s.", did)
+        invalidate_dashboard_cache()
         return True
     except requests.RequestException as e:
         logging.exception("Failed to delete PDS account with DID %s.", did, exc_info=e)
@@ -190,6 +341,7 @@ def takedown_pds_account(did: str) -> bool:
         )
         response.raise_for_status()
         logging.info("Successfully takedown PDS account with DID %s.", did)
+        invalidate_dashboard_cache()
         return True
     except requests.RequestException as e:
         logging.exception("Failed to takedown PDS account with DID %s.", did, exc_info=e)
@@ -213,6 +365,7 @@ def untakedown_pds_account(did: str) -> bool:
         )
         response.raise_for_status()
         logging.info("Successfully untakedown PDS account with DID %s.", did)
+        invalidate_dashboard_cache()
         return True
     except requests.RequestException as e:
         logging.exception("Failed to untakedown PDS account with DID %s.", did, exc_info=e)

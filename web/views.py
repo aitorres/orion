@@ -19,6 +19,7 @@ from web.models import AuditLog, AuditLogEvent
 from web.utils import (
     BATCH_SIZE,
     delete_pds_account,
+    get_enriched_accounts,
     get_gatekeeper_required_dids,
     get_pds_account_batch_infos,
     get_pds_account_info,
@@ -78,20 +79,39 @@ def dashboard_view(request: HttpRequest) -> HttpResponse:
     if not request.user.is_authenticated:
         return redirect("login")
 
+    accounts = get_pds_accounts()
+
     context = {
         "is_service_healthy": get_pds_status(),
-        "accounts": get_pds_accounts(),
+        "account_count": len(accounts),
         "gatekeeper_enabled": settings.GATEKEEPER_ENABLED,
-        "batch_size": BATCH_SIZE,
     }
-
-    if settings.GATEKEEPER_ENABLED:
-        context["gatekeeper_dids"] = get_gatekeeper_required_dids()
 
     return render(
         request,
         "dashboard.html",
         context,
+    )
+
+
+@login_required
+def accounts_data_api_view(request: HttpRequest) -> HttpResponse:
+    """Return all enriched account rows as JSON for the dashboard table."""
+
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+
+    use_cache = request.GET.get("refresh") != "1"
+    accounts = get_enriched_accounts(use_cache=use_cache)
+
+    return JsonResponse(
+        {
+            "accounts": accounts,
+            "gatekeeper_enabled": settings.GATEKEEPER_ENABLED,
+        }
     )
 
 
@@ -226,62 +246,45 @@ def export_accounts_csv_view(request: HttpRequest) -> HttpResponse:
     if not request.user.is_authenticated:
         return redirect("login")
 
-    # Get all accounts
-    accounts = get_pds_accounts()
+    accounts = get_enriched_accounts()
     if not accounts:
         return HttpResponse("No accounts to export.", status=400)
 
-    # Get all account infos in batches
+    # Per-DID PDS info (email, etc.) isn't part of the cached enriched rows
+    # used to render the dashboard table, so fetch it separately (also cached).
     dids = [account["did"] for account in accounts]
-    account_infos = {}
+    info_by_did: dict[str, dict] = {}
     for i in range(0, len(dids), BATCH_SIZE):
         batch = dids[i : i + BATCH_SIZE]
-        infos = get_pds_account_batch_infos(batch)
-        for info in infos:
-            account_infos[info["did"]] = info
+        for info in get_pds_account_batch_infos(batch):
+            did = info.get("did")
+            if isinstance(did, str):
+                info_by_did[did] = info
 
-    # Get 2FA status
-    gatekeeper_dids = get_gatekeeper_required_dids()
-
-    # Create CSV response
     response = HttpResponse(content_type="text/csv")
     response["Content-Disposition"] = "attachment; filename=accounts_export.csv"
 
-    writer = csv.DictWriter(
-        response,
-        fieldnames=[
-            "did",
-            "handle",
-            "2fa_status",
-            "email",
-            "pds_status",
-            "appview_status",
-        ],
-    )
+    fieldnames = ["did", "handle", "email", "pds_status", "appview_status"]
+    if settings.GATEKEEPER_ENABLED:
+        fieldnames.insert(2, "2fa_status")
+
+    writer = csv.DictWriter(response, fieldnames=fieldnames)
     writer.writeheader()
 
     for account in accounts:
         did = account["did"]
-        info = account_infos.get(did, {})
+        info = info_by_did.get(did, {})
+        row = {
+            "did": did,
+            "handle": account.get("handle", "unknown"),
+            "email": info.get("email", ""),
+            "pds_status": account.get("pds_status", "Unknown"),
+            "appview_status": account.get("appview_status", "Unknown"),
+        }
+        if settings.GATEKEEPER_ENABLED:
+            row["2fa_status"] = account.get("twofa_status", "Disabled")
+        writer.writerow(row)
 
-        writer.writerow(
-            {
-                "did": did,
-                "handle": info.get("handle", "unknown"),
-                "2fa_status": "Enabled" if did in gatekeeper_dids else "Disabled",
-                "email": info.get("email", ""),
-                "pds_status": (
-                    "Active" if account.get("active") else account.get("status", "unknown")
-                ),
-                "appview_status": (
-                    "Suspended"
-                    if info.get("appview_suspended") is True
-                    else "Active" if info.get("appview_suspended") is False else "Unknown"
-                ),
-            }
-        )
-
-    # Log the export action
     AuditLog.objects.create(
         user=request.user,
         event=AuditLogEvent.INFO,

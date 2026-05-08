@@ -15,7 +15,6 @@
         padding: 0.45rem 0.55rem;
         line-height: 1.25;
     }
-    /* Blend simple-datatables controls with Pico */
     .datatable-wrapper .datatable-top,
     .datatable-wrapper .datatable-bottom {
         padding: 0.5rem 0;
@@ -24,11 +23,9 @@
     .datatable-wrapper .datatable-selector {
         margin: 0 0.25rem;
     }
-    /* Align all header cells vertically so non-sortable headers line up */
     .datatable-wrapper thead > tr > th {
         vertical-align: middle;
     }
-    /* Make sort arrows clearly visible (override library defaults) */
     .datatable-wrapper .datatable-sorter {
         padding-right: 1.25rem;
     }
@@ -56,7 +53,6 @@
     .datatable-wrapper .datatable-descending .datatable-sorter::before {
         opacity: 1;
     }
-    /* Compact action buttons so the accounts table fits without overflow */
     #accounts-table td .actions-cell {
         display: flex;
         flex-wrap: wrap;
@@ -67,10 +63,15 @@
         font-size: 0.8rem;
         margin: 0;
     }
-    /* Shrink the DID column (long monospace-ish strings) */
     #accounts-table td a[href*="bsky.app"] {
         font-size: 0.8rem;
         word-break: break-all;
+    }
+    #accounts-loading {
+        padding: 1rem 0;
+    }
+    #accounts-error {
+        color: var(--pico-color-red-500, #c0392b);
     }
 </style>
 {% endblock %}
@@ -104,55 +105,23 @@
     <header>
         <h2>Accounts</h2>
     </header>
-    {% if accounts %}
-        <p>There are {{ accounts|length }} accounts (repos) in the PDS.</p>
-        <table id="accounts-table" class="striped">
+    {% if account_count %}
+        <p>There are {{ account_count }} accounts (repos) in the PDS.</p>
+        <p id="accounts-loading" aria-busy="true">Loading account details&hellip;</p>
+        <p id="accounts-error" hidden>Failed to load account details. <a href="#" id="accounts-retry">Retry</a></p>
+        <table id="accounts-table" class="striped" hidden>
             <thead>
                 <tr>
-                    <th>#</th>
+                    <th data-type="number">#</th>
                     <th data-type="string">Handle</th>
-                    <th>DID</th>
-                    <th>PDS Status</th>
-                    <th>AppView Status</th>
-                    {% if gatekeeper_enabled %}<th>2FA Status</th>{% endif %}
+                    <th data-type="string">DID</th>
+                    <th data-type="string">PDS Status</th>
+                    <th data-type="string">AppView Status</th>
+                    {% if gatekeeper_enabled %}<th data-type="string">2FA Status</th>{% endif %}
                     <th data-sortable="false" data-searchable="false">Actions</th>
                 </tr>
             </thead>
-            <tbody>
-                {% for account in accounts %}
-                <tr data-did="{{ account.did }}">
-                    <td>{{ account.order }}</td>
-                    <td class="account-handle" aria-busy="true">Loading&hellip;</td>
-                    <td><a target="_blank" href="https://bsky.app/profile/{{ account.did }}">{{ account.did }}</a></td>
-                    <td class="account-status" data-base-status="{% if account.active %}Active{% else %}{{ account.status.title }}{% endif %}">
-                        <span class="pds-status">{% if account.active %}Active{% else %}{{ account.status.title }}{% endif %}</span>
-                    </td>
-                    <td>
-                        <span class="appview-status" aria-busy="true">Checking&hellip;</span>
-                    </td>
-                    {% if gatekeeper_enabled %}
-                    <td>
-                        {% if account.did in gatekeeper_dids %}
-                            Enabled
-                        {% else %}
-                            Disabled
-                        {% endif %}
-                    </td>
-                    {% endif %}
-                    <td>
-                        <div class="actions-cell">
-                        <a href="{% url 'account_action' account.did 'info' %}" role="button" class="secondary">Info</a>
-                        {% if account.status == 'takendown' %}
-                            <a href="{% url 'account_action' account.did 'untakedown' %}" role="button" class="secondary">Untakedown</a>
-                        {% else %}
-                            <a href="{% url 'account_action' account.did 'takedown' %}" role="button" class="secondary">Takedown</a>
-                        {% endif %}
-                        <a href="{% url 'account_action' account.did 'delete' %}" role="button" class="secondary">Delete</a>
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
+            <tbody></tbody>
         </table>
     {% else %}
         <p>No accounts found!</p>
@@ -161,226 +130,116 @@
 {% endblock %}
 
 {% block js %}
+{% if account_count %}
 <script src="https://cdn.jsdelivr.net/npm/simple-datatables@10.2.0/dist/umd/simple-datatables.min.js"></script>
 <script>
     (function () {
-        const BATCH_SIZE = {{ batch_size }};
-        const API_URL = "{% url 'account_infos_api' %}";
+        const API_URL = "{% url 'accounts_data_api' %}";
+        const GATEKEEPER_ENABLED = {% if gatekeeper_enabled %}true{% else %}false{% endif %};
+        const ACTION_BASE = "/accounts/";
+
         const tableEl = document.getElementById('accounts-table');
-        if (!tableEl) return;
+        const loadingEl = document.getElementById('accounts-loading');
+        const errorEl = document.getElementById('accounts-error');
+        const retryEl = document.getElementById('accounts-retry');
+        if (!tableEl || !window.simpleDatatables) return;
 
-        const rows = Array.from(tableEl.querySelectorAll('tr[data-did]'));
-        const dids = rows.map(row => row.dataset.did);
-        if (!dids.length) return;
+        function escapeHtml(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;',
+            }[ch]));
+        }
 
-        if (!window.simpleDatatables) return;
+        function actionsHtml(account) {
+            const did = encodeURIComponent(account.did);
+            const isTakendown = (account.pds_status || '').toLowerCase() === 'takendown';
+            const toggle = isTakendown
+                ? `<a href="${ACTION_BASE}${did}/untakedown/" role="button" class="secondary">Untakedown</a>`
+                : `<a href="${ACTION_BASE}${did}/takedown/" role="button" class="secondary">Takedown</a>`;
+            return (
+                '<div class="actions-cell">' +
+                `<a href="${ACTION_BASE}${did}/info/" role="button" class="secondary">Info</a>` +
+                toggle +
+                `<a href="${ACTION_BASE}${did}/delete/" role="button" class="secondary">Delete</a>` +
+                '</div>'
+            );
+        }
 
-        // did -> resolved handle (once the API has responded for it).
-        const handlesByDid = new Map();
-        // did -> appview suspended status (true/false/null).
-        const appviewStatusByDid = new Map();
-        // Column indexes resolved after datatable construction.
-        let handleCol = 1;
-        let appviewCol = 4;
+        function buildRow(account) {
+            const didLink = `<a target="_blank" href="https://bsky.app/profile/${escapeHtml(account.did)}">${escapeHtml(account.did)}</a>`;
+            const cells = [
+                { data: account.order, text: String(account.order) },
+                { data: account.handle || 'unknown' },
+                { data: didLink, text: account.did },
+                { data: account.pds_status || 'Unknown' },
+                { data: account.appview_status || 'Unknown' },
+            ];
+            if (GATEKEEPER_ENABLED) {
+                cells.push({ data: account.twofa_status || 'Disabled' });
+            }
+            cells.push({ data: actionsHtml(account), text: '' });
+            return cells;
+        }
 
-        const dt = new window.simpleDatatables.DataTable(tableEl, {
-            searchable: true,
-            sortable: true,
-            perPage: 25,
-            perPageSelect: [10, 25, 50, 100, ["All", -1]],
-            labels: {
-                placeholder: "Search accounts...",
-                perPage: "accounts per page",
-                noRows: "No accounts found",
-                info: "Showing {start} to {end} of {rows} accounts",
-            },
-        });
+        function renderTable(accounts) {
+            const data = {
+                headings: Array.from(tableEl.querySelectorAll('thead th')).map(th => ({
+                    data: th.textContent.trim(),
+                })),
+                data: accounts.map(buildRow),
+            };
 
-        function findColumnIndex(columnName) {
-            return dt.data.headings.findIndex(h => {
-                const label = (h.text || (h.data != null ? String(h.data) : ""))
-                    .trim()
-                    .toLowerCase();
-                return label === columnName;
+            new window.simpleDatatables.DataTable(tableEl, {
+                data: data,
+                searchable: true,
+                sortable: true,
+                perPage: 25,
+                perPageSelect: [10, 25, 50, 100, ["All", -1]],
+                labels: {
+                    placeholder: "Search accounts...",
+                    perPage: "accounts per page",
+                    noRows: "No accounts found",
+                    info: "Showing {start} to {end} of {rows} accounts",
+                },
             });
+
+            loadingEl.hidden = true;
+            errorEl.hidden = true;
+            tableEl.hidden = false;
         }
 
-        // Resolve column indexes from the parsed headings.
-        const foundHandle = findColumnIndex('handle');
-        if (foundHandle >= 0) handleCol = foundHandle;
-        const foundAppView = findColumnIndex('appview status');
-        if (foundAppView >= 0) appviewCol = foundAppView;
+        async function loadAccounts() {
+            loadingEl.hidden = false;
+            loadingEl.setAttribute('aria-busy', 'true');
+            errorEl.hidden = true;
+            tableEl.hidden = true;
 
-        // DOM row order == dt.data.data order (rows parsed from tBodies[0]).
-        const indexByDid = new Map(dids.map((did, i) => [did, i]));
-
-        function getDidFromRow(rowEl) {
-            if (!rowEl) return null;
-            if (rowEl.dataset && rowEl.dataset.did) return rowEl.dataset.did;
-            const link = rowEl.querySelector('a[href*="bsky.app/profile/"]');
-            if (!link) return null;
-            const href = link.getAttribute('href') || '';
-            const marker = '/profile/';
-            const pos = href.indexOf(marker);
-            if (pos < 0) return null;
-            return href.slice(pos + marker.length);
-        }
-
-        function updateHandleDom(did, handle) {
-            const row = tableEl.querySelector(`tr[data-did="${did}"]`);
-            if (!row) return;
-            const handleEl = row.querySelector('.account-handle');
-            if (!handleEl) return;
-            handleEl.textContent = handle;
-            handleEl.removeAttribute('aria-busy');
-        }
-
-        function updateAppViewDom(did, appviewSuspended) {
-            const row = tableEl.querySelector(`tr[data-did="${did}"]`);
-            if (!row) return;
-            const statusEl = row.querySelector('.appview-status');
-            if (!statusEl) return;
-
-            if (appviewSuspended === true) {
-                statusEl.textContent = 'Suspended';
-            } else if (appviewSuspended === false) {
-                statusEl.textContent = 'Active';
-            } else {
-                statusEl.textContent = 'Unknown';
-            }
-
-            statusEl.removeAttribute('aria-busy');
-        }
-
-        function rehydrateVisibleRows() {
-            const visibleRows = Array.from(tableEl.querySelectorAll('tbody tr'));
-            visibleRows.forEach(row => {
-                const did = getDidFromRow(row);
-                if (!did) return;
-
-                if (handlesByDid.has(did)) {
-                    const handle = handlesByDid.get(did);
-                    const handleEl = row.querySelector('.account-handle');
-                    if (handleEl && handle != null) {
-                        handleEl.textContent = handle;
-                        handleEl.removeAttribute('aria-busy');
-                    }
-                }
-
-                if (appviewStatusByDid.has(did)) {
-                    const appviewSuspended = appviewStatusByDid.get(did);
-                    const statusEl = row.querySelector('.appview-status');
-                    if (!statusEl) return;
-                    if (appviewSuspended === true) {
-                        statusEl.textContent = 'Suspended';
-                    } else if (appviewSuspended === false) {
-                        statusEl.textContent = 'Active';
-                    } else {
-                        statusEl.textContent = 'Unknown';
-                    }
-                    statusEl.removeAttribute('aria-busy');
-                }
-            });
-        }
-
-        function recordHandle(did, handle) {
-            handlesByDid.set(did, handle);
-            const idx = indexByDid.get(did);
-            if (idx === undefined) return;
-            const row = dt.data.data[idx];
-            if (!row) return;
-            const cell = row.cells[handleCol];
-            if (!cell) return;
-            // Handle column is data-type="string", so cell.data is a plain
-            // string. Updating data/text/order keeps rendering, search, and
-            // sort all reading the resolved handle.
-            cell.data = handle;
-            cell.text = handle;
-            cell.order = handle;
-            if (cell.attributes && "aria-busy" in cell.attributes) {
-                delete cell.attributes["aria-busy"];
-            }
-            updateHandleDom(did, handle);
-        }
-
-        function recordAppViewStatus(did, appviewSuspended) {
-            appviewStatusByDid.set(did, appviewSuspended ?? null);
-            const idx = indexByDid.get(did);
-            if (idx !== undefined) {
-                const row = dt.data.data[idx];
-                const cell = row && row.cells ? row.cells[appviewCol] : null;
-                const label = appviewSuspended === true
-                    ? 'Suspended'
-                    : appviewSuspended === false
-                        ? 'Active'
-                        : 'Unknown';
-
-                if (cell) {
-                    cell.data = label;
-                    cell.text = label;
-                    cell.order = label;
-                    if (cell.attributes && "aria-busy" in cell.attributes) {
-                        delete cell.attributes["aria-busy"];
-                    }
-                }
-            }
-            updateAppViewDom(did, appviewSuspended);
-        }
-
-        async function fetchBatch(batch) {
-            const params = new URLSearchParams();
-            batch.forEach(did => params.append('dids', did));
-
-            let infos = [];
             try {
-                const response = await fetch(`${API_URL}?${params.toString()}`, {
+                const response = await fetch(API_URL, {
                     credentials: 'same-origin',
                     headers: { 'Accept': 'application/json' },
                 });
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const data = await response.json();
-                infos = data.infos || [];
+                renderTable(Array.isArray(data.accounts) ? data.accounts : []);
             } catch (err) {
-                console.error('Failed to load account infos:', err);
+                console.error('Failed to load accounts:', err);
+                loadingEl.hidden = true;
+                errorEl.hidden = false;
             }
-
-            const returned = new Set();
-            infos.forEach(info => {
-                returned.add(info.did);
-                recordHandle(info.did, info.handle || 'unknown');
-                recordAppViewStatus(info.did, info.appview_suspended);
-            });
-            batch.forEach(did => {
-                if (!returned.has(did)) {
-                    recordHandle(did, 'unknown');
-                    recordAppViewStatus(did, null);
-                }
-            });
-
-            dt.update();
-            rehydrateVisibleRows();
         }
 
-        const refreshEvents = [
-            'datatable.search',
-            'datatable.sort',
-            'datatable.page',
-            'datatable.perpage',
-            'datatable.update',
-            'datatable.refresh',
-        ];
-        refreshEvents.forEach(eventName => {
-            dt.on(eventName, () => {
-                requestAnimationFrame(rehydrateVisibleRows);
-            });
+        retryEl.addEventListener('click', (event) => {
+            event.preventDefault();
+            loadAccounts();
         });
 
-        (async () => {
-            for (let i = 0; i < dids.length; i += BATCH_SIZE) {
-                await fetchBatch(dids.slice(i, i + BATCH_SIZE));
-            }
-            rehydrateVisibleRows();
-        })();
+        loadAccounts();
     })();
 </script>
+{% endif %}
 {% endblock %}

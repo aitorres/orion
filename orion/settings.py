@@ -204,3 +204,14 @@ PDS_ADMIN_PASSWORD: Final[str] = _pds_admin_password
 APPVIEW_HOSTNAME: Final[str] = os.environ.get(
     "ORION_APPVIEW_HOSTNAME", "https://public.api.bsky.app"
 )
+
+# Cache
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "orion-default",
+    },
+}
+
+# Default TTL for cached upstream lookups, in seconds.
+ORION_UPSTREAM_CACHE_TTL: Final[int] = int(os.environ.get("ORION_UPSTREAM_CACHE_TTL", "300"))
