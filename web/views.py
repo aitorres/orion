@@ -254,7 +254,7 @@ def export_accounts_csv_view(request: HttpRequest) -> HttpResponse:
             "handle",
             "2fa_status",
             "email",
-            "account_status",
+            "pds_status",
             "appview_status",
         ],
     )
