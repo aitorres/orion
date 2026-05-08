@@ -280,12 +280,17 @@ def get_enriched_accounts(use_cache: bool = True) -> list[dict[str, Any]]:
         did = account.get("did", "")
         info = info_by_did.get(did, {})
 
+        pds_status = _format_pds_status(account)
+        appview_status = _format_appview_status(info)
+        if pds_status == "Deactivated" and appview_status == "Suspended":
+            appview_status = "Suspended or Deactivated"
+
         row: dict[str, Any] = {
             "order": account.get("order"),
             "did": did,
             "handle": info.get("handle") or "unknown",
-            "pds_status": _format_pds_status(account),
-            "appview_status": _format_appview_status(info),
+            "pds_status": pds_status,
+            "appview_status": appview_status,
         }
         if settings.GATEKEEPER_ENABLED:
             row["twofa_status"] = "Enabled" if did in gatekeeper_dids else "Disabled"
