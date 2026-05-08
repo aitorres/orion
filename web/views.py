@@ -76,9 +76,6 @@ def logout_view(request: HttpRequest) -> HttpResponse:
 def dashboard_view(request: HttpRequest) -> HttpResponse:
     """Render the dashboard page for authenticated users."""
 
-    if not request.user.is_authenticated:
-        return redirect("login")
-
     accounts = get_pds_accounts()
 
     context = {
@@ -100,9 +97,6 @@ def accounts_data_api_view(request: HttpRequest) -> HttpResponse:
 
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
-
-    if not request.user.is_authenticated:
-        return JsonResponse({"error": "Unauthorized"}, status=401)
 
     use_cache = request.GET.get("refresh") != "1"
     accounts = get_enriched_accounts(use_cache=use_cache)
@@ -126,9 +120,6 @@ def account_infos_api_view(request: HttpRequest) -> HttpResponse:
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
-    if not request.user.is_authenticated:
-        return JsonResponse({"error": "Unauthorized"}, status=401)
-
     dids = request.GET.getlist("dids")
     if not dids:
         return JsonResponse({"infos": []})
@@ -143,9 +134,6 @@ def account_infos_api_view(request: HttpRequest) -> HttpResponse:
 @login_required
 def audit_log_view(request: HttpRequest) -> HttpResponse:
     """Render the audit log page for authenticated users."""
-
-    if not request.user.is_authenticated:
-        return redirect("login")
 
     audit_logs = AuditLog.objects.select_related("user").order_by("-created_at")
 
@@ -243,9 +231,6 @@ def change_password_view(request: HttpRequest) -> HttpResponse:
 def export_accounts_csv_view(request: HttpRequest) -> HttpResponse:
     """Export all accounts to a CSV file."""
 
-    if not request.user.is_authenticated:
-        return redirect("login")
-
     accounts = get_enriched_accounts()
     if not accounts:
         return HttpResponse("No accounts to export.", status=400)
@@ -285,6 +270,7 @@ def export_accounts_csv_view(request: HttpRequest) -> HttpResponse:
             row["2fa_status"] = account.get("twofa_status", "Disabled")
         writer.writerow(row)
 
+    assert isinstance(request.user, get_user_model())
     AuditLog.objects.create(
         user=request.user,
         event=AuditLogEvent.INFO,
