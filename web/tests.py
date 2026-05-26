@@ -1,3 +1,5 @@
+# pylint: disable=too-many-public-methods
+
 from unittest.mock import Mock, patch
 
 import requests
@@ -459,6 +461,59 @@ class UtilsTests(TestCase):
     def test_get_pds_accounts_request_exception(self, mock_get: Mock):
         """Test get_pds_accounts returns empty list on failure."""
         mock_get.side_effect = requests.RequestException("Connection refused")
+
+        result = get_pds_accounts()
+
+        self.assertEqual(result, [])
+
+    @patch("web.utils.requests.get")
+    def test_get_pds_accounts_paginates_with_cursor(self, mock_get: Mock):
+        """Test get_pds_accounts follows the cursor across multiple pages."""
+        page1 = Mock()
+        page1.json.return_value = {
+            "repos": [{"did": "did:plc:1"}, {"did": "did:plc:2"}],
+            "cursor": "next-cursor",
+        }
+        page1.raise_for_status = Mock()
+
+        page2 = Mock()
+        page2.json.return_value = {
+            "repos": [{"did": "did:plc:3"}],
+            "cursor": None,
+        }
+        page2.raise_for_status = Mock()
+
+        mock_get.side_effect = [page1, page2]
+
+        result = get_pds_accounts()
+
+        self.assertEqual(
+            result,
+            [
+                {"did": "did:plc:1", "order": 1},
+                {"did": "did:plc:2", "order": 2},
+                {"did": "did:plc:3", "order": 3},
+            ],
+        )
+        self.assertEqual(mock_get.call_count, 2)
+        first_params = mock_get.call_args_list[0].kwargs["params"]
+        second_params = mock_get.call_args_list[1].kwargs["params"]
+        self.assertNotIn("cursor", first_params)
+        self.assertEqual(second_params["cursor"], "next-cursor")
+        self.assertEqual(first_params["limit"], 1000)
+        self.assertEqual(second_params["limit"], 1000)
+
+    @patch("web.utils.requests.get")
+    def test_get_pds_accounts_pagination_failure_returns_empty(self, mock_get: Mock):
+        """Test get_pds_accounts returns empty list if a later page fails."""
+        page1 = Mock()
+        page1.json.return_value = {
+            "repos": [{"did": "did:plc:1"}],
+            "cursor": "next-cursor",
+        }
+        page1.raise_for_status = Mock()
+
+        mock_get.side_effect = [page1, requests.RequestException("boom")]
 
         result = get_pds_accounts()
 

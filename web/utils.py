@@ -9,6 +9,8 @@ from django.core.cache import cache
 
 REQUESTS_TIMEOUT_IN_SECONDS: Final[int] = 10
 BATCH_SIZE: Final[int] = 20
+LIST_REPOS_PAGE_SIZE: Final[int] = 1000
+LIST_REPOS_MAX_PAGES: Final[int] = 1000
 
 # Short TTL for the health check; longer for everything else.
 HEALTH_CACHE_TTL_SECONDS: Final[int] = 30
@@ -51,14 +53,32 @@ def get_pds_accounts(use_cache: bool = True) -> list[dict[str, Any]]:
         if cached is not None:
             return cached
 
+    repos: list[dict[str, Any]] = []
+    cursor: str | None = None
     try:
-        response = requests.get(
-            f"{settings.PDS_HOSTNAME}/xrpc/com.atproto.sync.listRepos",
-            timeout=REQUESTS_TIMEOUT_IN_SECONDS,
-        )
-        response.raise_for_status()
-        data = response.json()
-        accounts = [{**repo, "order": idx + 1} for idx, repo in enumerate(data["repos"])]
+        for _ in range(LIST_REPOS_MAX_PAGES):
+            params: dict[str, Any] = {"limit": LIST_REPOS_PAGE_SIZE}
+
+            if cursor:
+                params["cursor"] = cursor
+
+            response = requests.get(
+                f"{settings.PDS_HOSTNAME}/xrpc/com.atproto.sync.listRepos",
+                params=params,
+                timeout=REQUESTS_TIMEOUT_IN_SECONDS,
+            )
+            response.raise_for_status()
+            data = response.json()
+            repos.extend(data.get("repos", []))
+            cursor = data.get("cursor")
+            if not cursor:
+                break
+        else:
+            logging.warning(
+                "listRepos pagination hit the max page limit of %d; results may be truncated.",
+                LIST_REPOS_MAX_PAGES,
+            )
+        accounts = [{**repo, "order": idx + 1} for idx, repo in enumerate(repos)]
     except requests.RequestException as e:
         logging.exception("Failed to retrieve PDS accounts.", exc_info=e)
         return []
