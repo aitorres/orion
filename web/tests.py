@@ -50,12 +50,15 @@ class BaseViewTest(TestCase):
 
     def authenticate(self):
         """Log in the test user and mark the session as OTP-verified."""
-        self.client.login(username="testuser", password="testpass")
-        self._mark_otp_verified(self.get_user())
+        user = self.get_user()
+        self.client.force_login(user, backend="django.contrib.auth.backends.ModelBackend")
+        self._mark_otp_verified(user)
 
     def authenticate_password_only(self):
         """Log in without satisfying the OTP step (for 2FA enforcement tests)."""
-        self.client.login(username="testuser", password="testpass")
+        self.client.force_login(
+            self.get_user(), backend="django.contrib.auth.backends.ModelBackend"
+        )
 
     def get_user(self):
         """Return the test user instance."""
@@ -299,8 +302,10 @@ class ChangePasswordViewTests(BaseViewTest):
         self.assertRedirects(response, "/dashboard/", fetch_redirect_response=False)
 
         self.client.logout()
-        login_success = self.client.login(username="testuser", password="newpassword123")
-        self.assertTrue(login_success)
+        login_response = self.client.post(
+            "/", {"username": "testuser", "password": "newpassword123"}
+        )
+        self.assertEqual(login_response.status_code, 302)
 
     def test_change_password_wrong_current_password(self):
         """Test that wrong current password shows error."""

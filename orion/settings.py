@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django_otp",
     "django_otp.plugins.otp_totp",
+    "axes",
     "web",
 ]
 
@@ -68,6 +69,12 @@ MIDDLEWARE = [
     "web.middleware.Enforce2FAMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "axes.middleware.AxesMiddleware",
+]
+
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",
+    "django.contrib.auth.backends.ModelBackend",
 ]
 
 ROOT_URLCONF = "orion.urls"
@@ -187,9 +194,23 @@ if not DEBUG:
     }
 
 LOGIN_URL = "/"
+LOGIN_REDIRECT_URL = "/dashboard/"
+LOGOUT_REDIRECT_URL = "/"
 
 # Two-factor authentication (TOTP) settings
 OTP_TOTP_ISSUER = os.environ.get("ORION_OTP_TOTP_ISSUER", "Orion")
+
+# django-axes: brute-force protection for the login form.
+# These settings also apply to the 2FA verify view.
+AXES_ENABLED = True
+AXES_FAILURE_LIMIT = 5
+AXES_COOLOFF_TIME = 1  # hours
+AXES_LOCKOUT_PARAMETERS = ["username", "ip_address"]
+AXES_RESET_ON_SUCCESS = True
+AXES_LOCKOUT_TEMPLATE = None
+AXES_VERBOSE = False
+# When running behind a reverse proxy that sets X-Forwarded-For, trust it.
+AXES_IPWARE_PROXY_COUNT = int(os.environ.get("ORION_TRUSTED_PROXY_COUNT", "0")) or None
 
 # PDS variables
 _pds_hostname = os.environ.get("ORION_PDS_HOSTNAME") or (
