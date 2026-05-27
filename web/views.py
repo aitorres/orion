@@ -311,7 +311,11 @@ def two_factor_setup_view(request: HttpRequest) -> HttpResponse:
             )
             messages.success(request, "Two-factor authentication enabled.")
             return redirect("dashboard")
-        messages.error(request, "Invalid verification code. Please try again.")
+        messages.error(
+            request,
+            "Invalid verification code. Codes are rejected if expired or already used; "
+            "wait for a new code to appear in your authenticator app and try again.",
+        )
 
     return render(
         request,
@@ -353,6 +357,10 @@ def two_factor_verify_view(request: HttpRequest) -> HttpResponse:
             event=AuditLogEvent.TWO_FACTOR_FAILED,
             description="User failed two-factor verification",
         )
-        messages.error(request, "Invalid verification code. Please try again.")
+        messages.error(
+            request,
+            "Invalid verification code. Codes are rejected if expired or already used; "
+            "wait for a new code to appear in your authenticator app and try again.",
+        )
 
     return render(request, "two_factor_verify.html")
