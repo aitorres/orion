@@ -1,3 +1,4 @@
+import base64
 import csv
 from typing import Callable
 
@@ -13,12 +14,16 @@ from django.http import (
     JsonResponse,
 )
 from django.shortcuts import redirect, render
+from django_otp import login as otp_login
+from django_otp import user_has_device
+from django_otp.plugins.otp_totp.models import TOTPDevice
 
 from orion import settings
 from web.models import AuditLog, AuditLogEvent
 from web.utils import (
     BATCH_SIZE,
     delete_pds_account,
+    generate_totp_qr_svg,
     get_enriched_accounts,
     get_gatekeeper_required_dids,
     get_pds_account_batch_infos,
@@ -278,3 +283,76 @@ def export_accounts_csv_view(request: HttpRequest) -> HttpResponse:
     )
 
     return response
+
+
+@login_required
+def two_factor_setup_view(request: HttpRequest) -> HttpResponse:
+    """Display a QR code for first-time TOTP setup and confirm the device."""
+
+    user = request.user
+    assert isinstance(user, get_user_model())
+
+    if user_has_device(user, confirmed=True):
+        return redirect("two_factor_verify")
+
+    device, _ = TOTPDevice.objects.get_or_create(user=user, name="default", confirmed=False)
+
+    if request.method == "POST":
+        token = request.POST.get("token", "").strip()
+        if token and device.verify_token(token):
+            device.confirmed = True
+            device.save()
+            otp_login(request, device)
+            request.session.cycle_key()
+            AuditLog.objects.create(
+                user=user,
+                event=AuditLogEvent.TWO_FACTOR_ENABLED,
+                description="User enabled two-factor authentication",
+            )
+            messages.success(request, "Two-factor authentication enabled.")
+            return redirect("dashboard")
+        messages.error(request, "Invalid verification code. Please try again.")
+
+    return render(
+        request,
+        "two_factor_setup.html",
+        {
+            "qr_svg": generate_totp_qr_svg(device.config_url),
+            "secret": base64.b32encode(device.bin_key).decode("ascii"),
+        },
+    )
+
+
+@login_required
+def two_factor_verify_view(request: HttpRequest) -> HttpResponse:
+    """Verify a TOTP code for a user who already has a confirmed device."""
+
+    user = request.user
+    assert isinstance(user, get_user_model())
+
+    device = TOTPDevice.objects.filter(user=user, confirmed=True).first()
+    if device is None:
+        return redirect("two_factor_setup")
+
+    if user.is_verified():  # type: ignore[attr-defined]
+        return redirect("dashboard")
+
+    if request.method == "POST":
+        token = request.POST.get("token", "").strip()
+        if token and device.verify_token(token):
+            otp_login(request, device)
+            request.session.cycle_key()
+            AuditLog.objects.create(
+                user=user,
+                event=AuditLogEvent.TWO_FACTOR_VERIFIED,
+                description="User passed two-factor verification",
+            )
+            return redirect("dashboard")
+        AuditLog.objects.create(
+            user=user,
+            event=AuditLogEvent.TWO_FACTOR_FAILED,
+            description="User failed two-factor verification",
+        )
+        messages.error(request, "Invalid verification code. Please try again.")
+
+    return render(request, "two_factor_verify.html")

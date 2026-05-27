@@ -12,6 +12,9 @@ class AuditLogEvent(models.TextChoices):
     TAKEDOWN = "TAKEDOWN", "Takedown"
     UNTAKEDOWN = "UNTAKEDOWN", "Untakedown"
     PASSWORD_CHANGE = "PASSWORD_CHANGE", "Password Change"
+    TWO_FACTOR_ENABLED = "TWO_FACTOR_ENABLED", "Two-Factor Enabled"
+    TWO_FACTOR_VERIFIED = "TWO_FACTOR_VERIFIED", "Two-Factor Verified"
+    TWO_FACTOR_FAILED = "TWO_FACTOR_FAILED", "Two-Factor Failed"
     INFO = "INFO", "Info"
 
 

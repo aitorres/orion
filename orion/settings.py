@@ -51,6 +51,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django_otp",
+    "django_otp.plugins.otp_totp",
     "web",
 ]
 
@@ -62,6 +64,8 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django_otp.middleware.OTPMiddleware",
+    "web.middleware.Enforce2FAMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -183,6 +187,9 @@ if not DEBUG:
     }
 
 LOGIN_URL = "/"
+
+# Two-factor authentication (TOTP) settings
+OTP_TOTP_ISSUER = os.environ.get("ORION_OTP_TOTP_ISSUER", "Orion")
 
 # PDS variables
 _pds_hostname = os.environ.get("ORION_PDS_HOSTNAME") or (

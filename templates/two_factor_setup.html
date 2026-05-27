@@ -1,0 +1,49 @@
+{% extends "_base.html" %}
+{% block title %}Set up two-factor authentication{% endblock %}
+
+{% block content %}
+<article>
+    <header>
+        <h1>Set up two-factor authentication</h1>
+        <p>
+            Two-factor authentication is required for your account. Scan the QR
+            code below with an authenticator app, then enter the 6-digit code it
+            displays to finish setup.
+        </p>
+    </header>
+
+    <div style="max-width: 49mm; margin: 1rem auto;">
+        {{ qr_svg|safe }}
+    </div>
+
+    <p style="text-align: center;">
+        <small>
+            Can't scan? Enter this secret manually:<br/>
+            <code>{{ secret }}</code>
+        </small>
+    </p>
+
+    <form method="post" action="{% url 'two_factor_setup' %}">
+        {% csrf_token %}
+        <label for="token">Verification code</label>
+        <input
+            type="text"
+            id="token"
+            name="token"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            pattern="[0-9]*"
+            maxlength="6"
+            required
+            autofocus
+        >
+        <button type="submit">Verify and enable</button>
+    </form>
+
+    <footer>
+        <p>
+            <a href="{% url 'logout' %}">Sign out</a>
+        </p>
+    </footer>
+</article>
+{% endblock %}

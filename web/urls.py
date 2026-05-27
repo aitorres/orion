@@ -11,6 +11,8 @@ from web.views import (
     export_accounts_csv_view,
     healthcheck_view,
     logout_view,
+    two_factor_setup_view,
+    two_factor_verify_view,
 )
 
 urlpatterns = [
@@ -22,6 +24,8 @@ urlpatterns = [
     path("audit-log/", audit_log_view, name="audit_log"),
     path("change-password/", change_password_view, name="change_password"),
     path("export-accounts-csv/", export_accounts_csv_view, name="export_accounts_csv"),
+    path("2fa/setup/", two_factor_setup_view, name="two_factor_setup"),
+    path("2fa/verify/", two_factor_verify_view, name="two_factor_verify"),
     path("logout/", logout_view, name="logout"),
     path("", OrionLoginView.as_view(), name="login"),
 ]

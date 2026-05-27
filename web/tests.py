@@ -6,6 +6,9 @@ import requests
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import TestCase, override_settings
+from django_otp import DEVICE_ID_SESSION_KEY
+from django_otp.oath import totp
+from django_otp.plugins.otp_totp.models import TOTPDevice
 
 from web.models import AuditLog, AuditLogEvent
 from web.utils import (
@@ -29,8 +32,29 @@ class BaseViewTest(TestCase):
         User = get_user_model()
         User.objects.create_user(username="testuser", password="testpass")
 
+    def _mark_otp_verified(self, user):
+        """Attach a confirmed TOTP device to ``user`` and mark the session verified."""
+
+        device, _ = TOTPDevice.objects.get_or_create(
+            user=user, name="default", defaults={"confirmed": True}
+        )
+
+        if not device.confirmed:
+            device.confirmed = True
+            device.save()
+
+        session = self.client.session
+        session[DEVICE_ID_SESSION_KEY] = device.persistent_id
+        session.save()
+        return device
+
     def authenticate(self):
-        """Log in the test user."""
+        """Log in the test user and mark the session as OTP-verified."""
+        self.client.login(username="testuser", password="testpass")
+        self._mark_otp_verified(self.get_user())
+
+    def authenticate_password_only(self):
+        """Log in without satisfying the OTP step (for 2FA enforcement tests)."""
         self.client.login(username="testuser", password="testpass")
 
     def get_user(self):
@@ -734,3 +758,159 @@ class UtilsTests(TestCase):
         result = untakedown_pds_account("did:plc:123")
 
         self.assertFalse(result)
+
+
+class TwoFactorSetupTests(BaseViewTest):
+    """Tests for the mandatory TOTP setup view."""
+
+    def test_setup_requires_login(self):
+        """Anonymous users hitting the setup URL are redirected to login."""
+        response = self.client.get("/2fa/setup/")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/?next=/2fa/setup/", response.url)
+
+    def test_setup_get_renders_qr_and_creates_unconfirmed_device(self):
+        """GET shows the QR SVG and creates a single unconfirmed TOTP device."""
+        self.authenticate_password_only()
+        response = self.client.get("/2fa/setup/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "<svg")
+        self.assertContains(response, "Set up two-factor")
+        user = self.get_user()
+        self.assertTrue(TOTPDevice.objects.filter(user=user, confirmed=False).exists())
+
+    def test_setup_get_is_idempotent(self):
+        """Repeated GETs reuse the same unconfirmed device."""
+        self.authenticate_password_only()
+        self.client.get("/2fa/setup/")
+        self.client.get("/2fa/setup/")
+        user = self.get_user()
+        self.assertEqual(TOTPDevice.objects.filter(user=user).count(), 1)
+
+    def test_setup_post_invalid_token_does_not_confirm(self):
+        """POST with a wrong token re-renders the form and leaves the device unconfirmed."""
+        self.authenticate_password_only()
+        self.client.get("/2fa/setup/")
+        response = self.client.post("/2fa/setup/", {"token": "000000"})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Invalid verification code")
+        user = self.get_user()
+        self.assertFalse(TOTPDevice.objects.filter(user=user, confirmed=True).exists())
+
+    def test_setup_post_valid_token_confirms_device_and_logs_event(self):
+        """POST with the correct token confirms the device and writes an audit log."""
+        self.authenticate_password_only()
+        self.client.get("/2fa/setup/")
+        user = self.get_user()
+        device = TOTPDevice.objects.get(user=user, confirmed=False)
+        token = totp(device.bin_key, step=device.step, t0=device.t0, digits=device.digits)
+        response = self.client.post("/2fa/setup/", {"token": f"{token:0{device.digits}d}"})
+        self.assertRedirects(response, "/dashboard/", fetch_redirect_response=False)
+        device.refresh_from_db()
+        self.assertTrue(device.confirmed)
+        self.assertTrue(
+            AuditLog.objects.filter(user=user, event=AuditLogEvent.TWO_FACTOR_ENABLED).exists()
+        )
+
+    def test_setup_redirects_to_verify_when_already_enrolled(self):
+        """Users with a confirmed device are bounced to the verify view."""
+        self.authenticate_password_only()
+        user = self.get_user()
+        TOTPDevice.objects.create(user=user, name="default", confirmed=True)
+        response = self.client.get("/2fa/setup/")
+        self.assertRedirects(response, "/2fa/verify/", fetch_redirect_response=False)
+
+
+class TwoFactorVerifyTests(BaseViewTest):
+    """Tests for the TOTP verification view."""
+
+    def _create_confirmed_device(self):
+        """Create and return a confirmed TOTP device for the test user."""
+        user = self.get_user()
+        return TOTPDevice.objects.create(user=user, name="default", confirmed=True)
+
+    def test_verify_requires_login(self):
+        """Anonymous users hitting the verify URL are redirected to login."""
+        response = self.client.get("/2fa/verify/")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/?next=/2fa/verify/", response.url)
+
+    def test_verify_get_renders_form(self):
+        """GET renders the verification form when the user has a confirmed device."""
+        self._create_confirmed_device()
+        self.authenticate_password_only()
+        response = self.client.get("/2fa/verify/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Two-factor verification")
+
+    def test_verify_redirects_to_setup_when_no_device(self):
+        """Without a confirmed device, the verify view bounces to setup."""
+        self.authenticate_password_only()
+        response = self.client.get("/2fa/verify/")
+        self.assertRedirects(response, "/2fa/setup/", fetch_redirect_response=False)
+
+    def test_verify_post_valid_token_redirects_to_dashboard(self):
+        """A valid TOTP unlocks the dashboard and writes a verified audit log."""
+        device = self._create_confirmed_device()
+        self.authenticate_password_only()
+        token = totp(device.bin_key, step=device.step, t0=device.t0, digits=device.digits)
+        response = self.client.post("/2fa/verify/", {"token": f"{token:0{device.digits}d}"})
+        self.assertRedirects(response, "/dashboard/", fetch_redirect_response=False)
+        user = self.get_user()
+        self.assertTrue(
+            AuditLog.objects.filter(
+                user=user, event=AuditLogEvent.TWO_FACTOR_VERIFIED
+            ).exists()
+        )
+
+    def test_verify_post_invalid_token_logs_failure(self):
+        """An invalid TOTP re-renders with an error and writes a failure audit log."""
+        self._create_confirmed_device()
+        self.authenticate_password_only()
+        response = self.client.post("/2fa/verify/", {"token": "000000"})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Invalid verification code")
+        user = self.get_user()
+        self.assertTrue(
+            AuditLog.objects.filter(user=user, event=AuditLogEvent.TWO_FACTOR_FAILED).exists()
+        )
+
+
+class TwoFactorEnforcementTests(BaseViewTest):
+    """Tests for the Enforce2FAMiddleware."""
+
+    def test_unverified_user_without_device_is_redirected_to_setup(self):
+        """Unverified users without a device are redirected to setup on protected pages."""
+        self.authenticate_password_only()
+        for path in ("/dashboard/", "/audit-log/", "/change-password/"):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertRedirects(response, "/2fa/setup/", fetch_redirect_response=False)
+
+    def test_unverified_user_with_device_is_redirected_to_verify(self):
+        """Unverified users with a device are redirected to verify on protected pages."""
+        user = self.get_user()
+        TOTPDevice.objects.create(user=user, name="default", confirmed=True)
+        self.authenticate_password_only()
+        for path in ("/dashboard/", "/audit-log/", "/change-password/"):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertRedirects(response, "/2fa/verify/", fetch_redirect_response=False)
+
+    def test_logout_is_reachable_without_2fa(self):
+        """Logging out is exempt from 2FA enforcement."""
+        self.authenticate_password_only()
+        response = self.client.get("/logout/")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/")
+
+    def test_healthcheck_is_reachable_without_auth(self):
+        """The healthcheck endpoint is always reachable without auth."""
+        response = self.client.get("/health/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_verified_user_can_reach_dashboard(self):
+        """An OTP-verified user can reach the dashboard normally."""
+        self.authenticate()
+        response = self.client.get("/dashboard/")
+        self.assertEqual(response.status_code, 200)

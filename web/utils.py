@@ -1,8 +1,11 @@
+import io
 import logging
 import sqlite3
 from datetime import datetime
 from typing import Any, Final
 
+import qrcode
+import qrcode.image.svg
 import requests
 from django.conf import settings
 from django.core.cache import cache
@@ -395,3 +398,28 @@ def untakedown_pds_account(did: str) -> bool:
     except requests.RequestException as e:
         logging.exception("Failed to untakedown PDS account with DID %s.", did, exc_info=e)
         return False
+
+
+def generate_totp_qr_svg(config_url: str) -> str:
+    """Return an inline SVG ``<svg>`` element encoding the given otpauth:// URL."""
+
+    qr = qrcode.QRCode(
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
+        border=2,
+        image_factory=qrcode.image.svg.SvgPathImage,
+    )
+    qr.add_data(config_url)
+    qr.make(fit=True)
+
+    img = qr.make_image()
+    buffer = io.BytesIO()
+    img.save(buffer)
+
+    svg = buffer.getvalue().decode("utf-8")
+
+    # Strip the XML declaration so the SVG can be embedded inline in HTML.
+    if svg.startswith("<?xml"):
+        svg = svg.split("?>", 1)[1].lstrip()
+
+    return svg
