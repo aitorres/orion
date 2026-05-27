@@ -1,3 +1,4 @@
+import hashlib
 import io
 import logging
 import sqlite3
@@ -17,6 +18,31 @@ LIST_REPOS_MAX_PAGES: Final[int] = 1000
 
 # Short TTL for the health check; longer for everything else.
 HEALTH_CACHE_TTL_SECONDS: Final[int] = 30
+
+_CSV_INJECTION_PREFIXES: Final[tuple[str, ...]] = ("=", "+", "-", "@", "\t", "\r")
+
+
+def sanitize_csv_cell(value: Any) -> str:
+    """Return `value` coerced to `str`, neutralized against CSV injection.
+
+    Any cell beginning with a spreadsheet formula trigger character is prefixed
+    with a single quote so spreadsheet apps render it as literal text rather
+    than evaluating it as a formula.
+    """
+
+    text = "" if value is None else str(value)
+
+    if text.startswith(_CSV_INJECTION_PREFIXES):
+        return "'" + text
+
+    return text
+
+
+def _stable_key(values: list[str]) -> str:
+    """Return a process-stable digest of `values` for use in cache keys."""
+
+    joined = "\x00".join(sorted(values)).encode("utf-8")
+    return hashlib.sha1(joined, usedforsecurity=False).hexdigest()
 
 
 def _cache_ttl() -> int:
@@ -91,12 +117,12 @@ def get_pds_accounts(use_cache: bool = True) -> list[dict[str, Any]]:
 
 
 def get_appview_visible_dids(dids: list[str], use_cache: bool = True) -> set[str] | None:
-    """Return DIDs that are visible on AppView; ``None`` if lookup fails."""
+    """Return DIDs that are visible on AppView; `None` if lookup fails."""
 
     if not dids:
         return set()
 
-    cache_key = f"orion:appview:visible:{hash(tuple(sorted(dids)))}"
+    cache_key = f"orion:appview:visible:{_stable_key(dids)}"
     if use_cache:
         cached = cache.get(cache_key)
         if cached is not None:
@@ -127,7 +153,7 @@ def get_appview_visible_dids(dids: list[str], use_cache: bool = True) -> set[str
 
 
 def _with_appview_status(infos: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Attach ``appview_suspended`` to infos when appview lookup is available."""
+    """Attach `appview_suspended` to infos when appview lookup is available."""
 
     if not infos:
         return infos
@@ -161,7 +187,7 @@ def get_pds_account_batch_infos(
     if not dids:
         return []
 
-    cache_key = f"orion:pds:batch_infos:{hash(tuple(sorted(dids)))}"
+    cache_key = f"orion:pds:batch_infos:{_stable_key(dids)}"
     if use_cache:
         cached = cache.get(cache_key)
         if cached is not None:
@@ -401,7 +427,7 @@ def untakedown_pds_account(did: str) -> bool:
 
 
 def generate_totp_qr_svg(config_url: str) -> str:
-    """Return an inline SVG ``<svg>`` element encoding the given otpauth:// URL."""
+    """Return an inline SVG `<svg>` element encoding the given otpauth:// URL."""
 
     qr = qrcode.QRCode(
         error_correction=qrcode.constants.ERROR_CORRECT_M,
