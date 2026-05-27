@@ -209,6 +209,7 @@ LOGOUT_REDIRECT_URL = "/"
 
 # Two-factor authentication (TOTP) settings
 OTP_TOTP_ISSUER = os.environ.get("ORION_OTP_TOTP_ISSUER", "Orion")
+OTP_TOTP_THROTTLE_FACTOR = 0.5
 
 # django-axes: brute-force protection for the login form.
 # These settings also apply to the 2FA verify view.

@@ -3,9 +3,11 @@ import csv
 from typing import Callable
 
 from django.contrib import messages
-from django.contrib.auth import get_user_model, logout
+from django.contrib.auth import get_user_model, logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.views import LoginView
+from django.core.exceptions import ValidationError
 from django.http import (
     HttpRequest,
     HttpResponse,
@@ -19,6 +21,7 @@ from django_otp import user_has_device
 from django_otp.plugins.otp_totp.models import TOTPDevice
 
 from orion import settings
+from web.audit import record_audit
 from web.models import AuditLog, AuditLogEvent
 from web.utils import (
     BATCH_SIZE,
@@ -30,6 +33,7 @@ from web.utils import (
     get_pds_account_info,
     get_pds_accounts,
     get_pds_status,
+    sanitize_csv_cell,
     takedown_pds_account,
     untakedown_pds_account,
 )
@@ -50,7 +54,8 @@ class OrionLoginView(LoginView):
 
     def form_valid(self, form):
         response = super().form_valid(form)
-        AuditLog.objects.create(
+        record_audit(
+            self.request,
             user=self.request.user,
             event=AuditLogEvent.LOGIN,
             description="User logged in successfully",
@@ -67,7 +72,8 @@ def logout_view(request: HttpRequest) -> HttpResponse:
     """Log out the user and redirect to the login page."""
 
     if request.user.is_authenticated:
-        AuditLog.objects.create(
+        record_audit(
+            request,
             user=request.user,
             event=AuditLogEvent.LOGOUT,
             description="User logged out",
@@ -178,7 +184,8 @@ def account_action_view(request: HttpRequest, did: str, action: str) -> HttpResp
         audit_event, handler = ACCOUNT_ACTIONS[action]
         handler(did)
 
-        AuditLog.objects.create(
+        record_audit(
+            request,
             user=request.user,
             event=audit_event,
             description=f"User performed {action} on {did}",
@@ -191,6 +198,7 @@ def account_action_view(request: HttpRequest, did: str, action: str) -> HttpResp
 
 
 @login_required
+# pylint: disable-next=too-many-return-statements
 def change_password_view(request: HttpRequest) -> HttpResponse:
     """Handle password change form display (GET) and processing (POST)."""
 
@@ -203,24 +211,39 @@ def change_password_view(request: HttpRequest) -> HttpResponse:
         confirm_password = request.POST.get("confirm_password", "")
 
         user = request.user
+        assert isinstance(user, get_user_model())
+
+        def _fail(message: str) -> HttpResponse:
+            record_audit(
+                request,
+                user=user,
+                event=AuditLogEvent.PASSWORD_CHANGE_FAILED,
+                description=f"Password change failed: {message}",
+            )
+            messages.error(request, message)
+            return render(request, "change_password.html")
 
         if not user.check_password(current_password):
-            messages.error(request, "Current password is incorrect.")
-            return render(request, "change_password.html")
+            return _fail("Current password is incorrect.")
 
         if new_password != confirm_password:
-            messages.error(request, "New passwords do not match.")
-            return render(request, "change_password.html")
+            return _fail("New passwords do not match.")
 
         if new_password == current_password:
-            messages.error(request, "New password must be different from current password.")
-            return render(request, "change_password.html")
+            return _fail("New password must be different from current password.")
+
+        try:
+            validate_password(new_password, user=user)
+        except ValidationError as exc:
+            return _fail(" ".join(exc.messages))
 
         user.set_password(new_password)
         user.save()
+        # Keep the user signed in after the password rotation
+        update_session_auth_hash(request, user)
 
-        assert isinstance(user, get_user_model())
-        AuditLog.objects.create(
+        record_audit(
+            request,
             user=user,
             event=AuditLogEvent.PASSWORD_CHANGE,
             description="User changed their password",
@@ -265,24 +288,39 @@ def export_accounts_csv_view(request: HttpRequest) -> HttpResponse:
         did = account["did"]
         info = info_by_did.get(did, {})
         row = {
-            "did": did,
-            "handle": account.get("handle", "unknown"),
-            "email": info.get("email", ""),
-            "pds_status": account.get("pds_status", "Unknown"),
-            "appview_status": account.get("appview_status", "Unknown"),
+            "did": sanitize_csv_cell(did),
+            "handle": sanitize_csv_cell(account.get("handle", "unknown")),
+            "email": sanitize_csv_cell(info.get("email", "")),
+            "pds_status": sanitize_csv_cell(account.get("pds_status", "Unknown")),
+            "appview_status": sanitize_csv_cell(account.get("appview_status", "Unknown")),
         }
         if settings.GATEKEEPER_ENABLED:
-            row["2fa_status"] = account.get("twofa_status", "Disabled")
+            row["2fa_status"] = sanitize_csv_cell(account.get("twofa_status", "Disabled"))
         writer.writerow(row)
 
     assert isinstance(request.user, get_user_model())
-    AuditLog.objects.create(
+    record_audit(
+        request,
         user=request.user,
         event=AuditLogEvent.INFO,
         description="User exported accounts to CSV",
     )
 
     return response
+
+
+def _otp_throttle_message(device: TOTPDevice) -> str:
+    """Return a user-facing throttle message, or empty string if not throttled."""
+
+    allowed, details = device.verify_is_allowed()
+    if allowed:
+        return ""
+
+    locked_until = (details or {}).get("locked_until")
+    if locked_until is not None:
+        return "Too many invalid verification attempts. Please wait a moment and try again."
+
+    return "Too many invalid verification attempts. Please try again later."
 
 
 @login_required
@@ -298,24 +336,36 @@ def two_factor_setup_view(request: HttpRequest) -> HttpResponse:
     device, _ = TOTPDevice.objects.get_or_create(user=user, name="default", confirmed=False)
 
     if request.method == "POST":
-        token = request.POST.get("token", "").strip()
-        if token and device.verify_token(token):
-            device.confirmed = True
-            device.save()
-            otp_login(request, device)
-            request.session.cycle_key()
-            AuditLog.objects.create(
-                user=user,
-                event=AuditLogEvent.TWO_FACTOR_ENABLED,
-                description="User enabled two-factor authentication",
+        throttle_msg = _otp_throttle_message(device)
+
+        if throttle_msg:
+            messages.error(request, throttle_msg)
+        else:
+            token = request.POST.get("token", "").strip()
+            if token and device.verify_token(token):
+                device.throttle_reset()
+                device.confirmed = True
+                device.save()
+
+                otp_login(request, device)
+                request.session.cycle_key()
+
+                record_audit(
+                    request,
+                    user=user,
+                    event=AuditLogEvent.TWO_FACTOR_ENABLED,
+                    description="User enabled two-factor authentication",
+                )
+
+                messages.success(request, "Two-factor authentication enabled.")
+                return redirect("dashboard")
+
+            device.throttle_increment()
+            messages.error(
+                request,
+                "Invalid verification code. Codes are rejected if expired or already used; "
+                "wait for a new code to appear in your authenticator app and try again.",
             )
-            messages.success(request, "Two-factor authentication enabled.")
-            return redirect("dashboard")
-        messages.error(
-            request,
-            "Invalid verification code. Codes are rejected if expired or already used; "
-            "wait for a new code to appear in your authenticator app and try again.",
-        )
 
     return render(
         request,
@@ -342,25 +392,44 @@ def two_factor_verify_view(request: HttpRequest) -> HttpResponse:
         return redirect("dashboard")
 
     if request.method == "POST":
-        token = request.POST.get("token", "").strip()
-        if token and device.verify_token(token):
-            otp_login(request, device)
-            request.session.cycle_key()
-            AuditLog.objects.create(
+        throttle_msg = _otp_throttle_message(device)
+
+        if throttle_msg:
+            record_audit(
+                request,
                 user=user,
-                event=AuditLogEvent.TWO_FACTOR_VERIFIED,
-                description="User passed two-factor verification",
+                event=AuditLogEvent.TWO_FACTOR_FAILED,
+                description="Two-factor verification blocked: throttled",
             )
-            return redirect("dashboard")
-        AuditLog.objects.create(
-            user=user,
-            event=AuditLogEvent.TWO_FACTOR_FAILED,
-            description="User failed two-factor verification",
-        )
-        messages.error(
-            request,
-            "Invalid verification code. Codes are rejected if expired or already used; "
-            "wait for a new code to appear in your authenticator app and try again.",
-        )
+            messages.error(request, throttle_msg)
+        else:
+            token = request.POST.get("token", "").strip()
+
+            if token and device.verify_token(token):
+                device.throttle_reset()
+                otp_login(request, device)
+                request.session.cycle_key()
+
+                record_audit(
+                    request,
+                    user=user,
+                    event=AuditLogEvent.TWO_FACTOR_VERIFIED,
+                    description="User passed two-factor verification",
+                )
+
+                return redirect("dashboard")
+
+            device.throttle_increment()
+            record_audit(
+                request,
+                user=user,
+                event=AuditLogEvent.TWO_FACTOR_FAILED,
+                description="User failed two-factor verification",
+            )
+            messages.error(
+                request,
+                "Invalid verification code. Codes are rejected if expired or already used; "
+                "wait for a new code to appear in your authenticator app and try again.",
+            )
 
     return render(request, "two_factor_verify.html")

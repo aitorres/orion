@@ -1,22 +1,27 @@
-# pylint: disable=too-many-public-methods
+# pylint: disable=too-many-public-methods,too-many-lines
 
+import csv as csvmod
+import io
 from unittest.mock import Mock, patch
 
 import requests
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import TestCase, override_settings
+from django.test import RequestFactory, TestCase, override_settings
 from django_otp import DEVICE_ID_SESSION_KEY
 from django_otp.oath import totp
 from django_otp.plugins.otp_totp.models import TOTPDevice
 
+from web.audit import record_audit
 from web.models import AuditLog, AuditLogEvent
 from web.utils import (
+    _stable_key,
     delete_pds_account,
     get_pds_account_batch_infos,
     get_pds_account_info,
     get_pds_accounts,
     get_pds_status,
+    sanitize_csv_cell,
     takedown_pds_account,
     untakedown_pds_account,
 )
@@ -919,3 +924,344 @@ class TwoFactorEnforcementTests(BaseViewTest):
         self.authenticate()
         response = self.client.get("/dashboard/")
         self.assertEqual(response.status_code, 200)
+
+
+@override_settings(
+    AUTH_PASSWORD_VALIDATORS=[
+        {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+        {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+        {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+    ]
+)
+class ChangePasswordHardeningTests(BaseViewTest):
+    """Regression tests for the hardened password change flow."""
+
+    def _post(self, **overrides):
+        payload = {
+            "current_password": "testpass",
+            "new_password": "ValidNewPass123!",
+            "confirm_password": "ValidNewPass123!",
+        }
+        payload.update(overrides)
+        return self.client.post("/change-password/", payload)
+
+    def test_rejects_password_below_minimum_length(self):
+        """Passwords that fail MinimumLengthValidator are rejected with audit log."""
+        self.authenticate()
+        response = self._post(new_password="abc", confirm_password="abc")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "too short")
+        self.assertTrue(
+            AuditLog.objects.filter(event=AuditLogEvent.PASSWORD_CHANGE_FAILED).exists()
+        )
+        # Old password still works.
+        self.assertTrue(self.get_user().check_password("testpass"))
+
+    def test_rejects_common_password(self):
+        """Passwords that fail CommonPasswordValidator are rejected."""
+        self.authenticate()
+        response = self._post(new_password="password", confirm_password="password")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "too common")
+        self.assertTrue(self.get_user().check_password("testpass"))
+
+    def test_rejects_numeric_only_password(self):
+        """Passwords that fail NumericPasswordValidator are rejected."""
+        self.authenticate()
+        response = self._post(new_password="12345678", confirm_password="12345678")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "entirely numeric")
+        self.assertTrue(self.get_user().check_password("testpass"))
+
+    def test_wrong_current_password_writes_failure_audit(self):
+        """A wrong current password produces a PASSWORD_CHANGE_FAILED audit row."""
+        self.authenticate()
+        self._post(current_password="wrongpass")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                event=AuditLogEvent.PASSWORD_CHANGE_FAILED,
+                description__icontains="incorrect",
+            ).exists()
+        )
+
+    def test_mismatched_new_passwords_writes_failure_audit(self):
+        """Mismatched new/confirm passwords produce a failure audit row."""
+        self.authenticate()
+        self._post(new_password="ValidNewPass123!", confirm_password="OtherPass456!")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                event=AuditLogEvent.PASSWORD_CHANGE_FAILED,
+                description__icontains="do not match",
+            ).exists()
+        )
+
+    def test_same_as_current_writes_failure_audit(self):
+        """Reusing the current password produces a failure audit row."""
+        self.authenticate()
+        self._post(new_password="testpass", confirm_password="testpass")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                event=AuditLogEvent.PASSWORD_CHANGE_FAILED,
+                description__icontains="different",
+            ).exists()
+        )
+
+    def test_successful_change_keeps_session_alive(self):
+        """``update_session_auth_hash`` keeps the user signed in after rotation."""
+        self.authenticate()
+        response = self._post()
+        self.assertRedirects(response, "/dashboard/", fetch_redirect_response=False)
+        # Without update_session_auth_hash, this would redirect to login.
+        dashboard = self.client.get("/dashboard/")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertTrue(self.get_user().check_password("ValidNewPass123!"))
+
+
+class AuditHelperTests(TestCase):
+    """Tests for the ``record_audit`` helper and its client-metadata extraction."""
+
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.user = get_user_model().objects.create_user(username="audituser", password="x")
+
+    def test_records_remote_addr_when_no_forwarded_header(self):
+        """The REMOTE_ADDR is captured when X-Forwarded-For is absent."""
+        request = self.factory.get("/", REMOTE_ADDR="9.9.9.9", HTTP_USER_AGENT="UA/1.0")
+        entry = record_audit(
+            request, user=self.user, event=AuditLogEvent.INFO, description="x"
+        )
+        self.assertEqual(entry.ip_address, "9.9.9.9")
+        self.assertEqual(entry.user_agent, "UA/1.0")
+
+    def test_records_first_x_forwarded_for_entry(self):
+        """The first hop in X-Forwarded-For is treated as the client IP."""
+        request = self.factory.get(
+            "/",
+            REMOTE_ADDR="10.0.0.1",
+            HTTP_X_FORWARDED_FOR="1.2.3.4, 10.0.0.2, 10.0.0.1",
+        )
+        entry = record_audit(
+            request, user=self.user, event=AuditLogEvent.INFO, description="x"
+        )
+        self.assertEqual(entry.ip_address, "1.2.3.4")
+
+    def test_truncates_long_user_agent(self):
+        """User-Agent values longer than the field length are truncated."""
+        long_ua = "A" * 1024
+        request = self.factory.get("/", HTTP_USER_AGENT=long_ua)
+        entry = record_audit(
+            request, user=self.user, event=AuditLogEvent.INFO, description="x"
+        )
+        self.assertEqual(len(entry.user_agent), 512)
+
+    def test_handles_missing_request(self):
+        """Passing ``request=None`` is safe and stores null IP/UA."""
+        entry = record_audit(None, user=self.user, event=AuditLogEvent.INFO, description="x")
+        self.assertIsNone(entry.ip_address)
+        self.assertIsNone(entry.user_agent)
+
+
+@override_settings(AXES_ENABLED=False)
+class LoginAuditTests(BaseViewTest):
+    """Tests covering audit-log emission for the real login flow."""
+
+    def test_successful_login_records_ip_and_user_agent(self):
+        """A successful login captures REMOTE_ADDR and HTTP_USER_AGENT."""
+        self.client.post(
+            "/",
+            {"username": "testuser", "password": "testpass"},
+            REMOTE_ADDR="9.9.9.9",
+            HTTP_USER_AGENT="LoginUA/2.0",
+        )
+        entry = AuditLog.objects.filter(event=AuditLogEvent.LOGIN).first()
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.ip_address, "9.9.9.9")
+        self.assertEqual(entry.user_agent, "LoginUA/2.0")
+        self.assertEqual(entry.user, self.get_user())
+
+    def test_failed_login_records_login_failed_event(self):
+        """The user_login_failed signal writes a LOGIN_FAILED audit row."""
+        self.client.post(
+            "/",
+            {"username": "testuser", "password": "wrong-password"},
+            REMOTE_ADDR="9.9.9.9",
+        )
+        entry = AuditLog.objects.filter(event=AuditLogEvent.LOGIN_FAILED).first()
+        self.assertIsNotNone(entry)
+        self.assertIsNone(entry.user)
+        self.assertIn("testuser", entry.description)
+        self.assertEqual(entry.ip_address, "9.9.9.9")
+
+    def test_failed_login_for_unknown_username_still_records(self):
+        """A login for a nonexistent username also produces a LOGIN_FAILED row."""
+        self.client.post(
+            "/",
+            {"username": "ghost", "password": "whatever"},
+            REMOTE_ADDR="1.1.1.1",
+        )
+        entry = AuditLog.objects.filter(event=AuditLogEvent.LOGIN_FAILED).first()
+        self.assertIsNotNone(entry)
+        self.assertIsNone(entry.user)
+        self.assertIn("ghost", entry.description)
+
+
+class CsvSanitizerTests(TestCase):
+    """Tests for :func:`sanitize_csv_cell`."""
+
+    def test_neutralizes_formula_triggers(self):
+        """Cells starting with formula triggers are prefixed with a single quote."""
+        for prefix in ("=", "+", "-", "@", "\t", "\r"):
+            with self.subTest(prefix=prefix):
+                payload = f"{prefix}cmd|'/c calc'!A1"
+                self.assertEqual(sanitize_csv_cell(payload), "'" + payload)
+
+    def test_leaves_safe_values_unchanged(self):
+        """Cells without a trigger character are returned verbatim."""
+        self.assertEqual(sanitize_csv_cell("alice.bsky.social"), "alice.bsky.social")
+        self.assertEqual(sanitize_csv_cell(""), "")
+
+    def test_coerces_non_strings(self):
+        """Non-string values are coerced to ``str`` safely."""
+        self.assertEqual(sanitize_csv_cell(None), "")
+        self.assertEqual(sanitize_csv_cell(123), "123")
+        self.assertEqual(sanitize_csv_cell(True), "True")
+
+
+@override_settings(
+    PDS_HOSTNAME="https://localhost",
+    PDS_ADMIN_PASSWORD="admin",
+    APPVIEW_HOSTNAME="https://api.bsky.localhost",
+    GATEKEEPER_DB_PATH=None,
+)
+class CsvExportInjectionTests(BaseViewTest):
+    """End-to-end check that the CSV export escapes formula-injection payloads."""
+
+    @patch("web.views.get_pds_account_batch_infos")
+    @patch("web.views.get_enriched_accounts")
+    def test_export_escapes_formula_in_handle(self, mock_enriched: Mock, mock_batch: Mock):
+        """A handle starting with ``=`` is rendered as literal text in the CSV."""
+        self.authenticate()
+        mock_enriched.return_value = [
+            {
+                "did": "did:plc:1",
+                "handle": '=HYPERLINK("http://evil","click")',
+                "pds_status": "Active",
+                "appview_status": "Active",
+            }
+        ]
+        mock_batch.return_value = [
+            {"did": "did:plc:1", "email": "+1@example.com"},
+        ]
+
+        response = self.client.get("/export-accounts-csv/")
+        self.assertEqual(response.status_code, 200)
+
+        rows = list(csvmod.reader(io.StringIO(response.content.decode())))
+        # Row 0 is the header; row 1 is the single account row.
+        self.assertEqual(rows[1][1], '\'=HYPERLINK("http://evil","click")')
+        self.assertEqual(rows[1][2], "'+1@example.com")
+
+
+class StableCacheKeyTests(TestCase):
+    """Tests for :func:`_stable_key`."""
+
+    def test_order_independent(self):
+        """Different input orderings produce the same key."""
+        self.assertEqual(_stable_key(["a", "b", "c"]), _stable_key(["c", "a", "b"]))
+
+    def test_deterministic_across_calls(self):
+        """Repeated calls with the same input produce the same key."""
+        key1 = _stable_key(["did:plc:1", "did:plc:2"])
+        key2 = _stable_key(["did:plc:1", "did:plc:2"])
+        self.assertEqual(key1, key2)
+        self.assertEqual(len(key1), 40)  # sha1 hex digest length
+
+    def test_different_inputs_produce_different_keys(self):
+        """Distinct inputs hash to distinct keys."""
+        self.assertNotEqual(_stable_key(["a"]), _stable_key(["b"]))
+
+
+@override_settings(AXES_ENABLED=False)
+class TwoFactorThrottlingTests(BaseViewTest):
+    """Tests for the django-otp ThrottlingMixin integration on the 2FA views."""
+
+    def _confirmed_device(self):
+        user = self.get_user()
+        return TOTPDevice.objects.create(user=user, name="default", confirmed=True)
+
+    def _post_bad_token(self, url: str) -> int:
+        return self.client.post(url, {"token": "000000"}).status_code
+
+    def test_verify_throttles_after_repeated_failures(self):
+        """After enough bad tokens, the verify view returns the throttle message."""
+        device = self._confirmed_device()
+        self.authenticate_password_only()
+
+        # Default OTP throttling kicks in after ~1 failure (factor=1). Send a
+        # handful to be safely past the threshold.
+        for _ in range(5):
+            self.assertEqual(self._post_bad_token("/2fa/verify/"), 200)
+
+        device.refresh_from_db()
+        self.assertGreater(device.throttling_failure_count, 0)
+        allowed, _ = device.verify_is_allowed()
+        self.assertFalse(allowed)
+
+        response = self.client.post("/2fa/verify/", {"token": "111111"})
+        self.assertContains(response, "Too many invalid verification attempts")
+        # The throttled attempt is itself audited as a failure.
+        self.assertTrue(
+            AuditLog.objects.filter(
+                event=AuditLogEvent.TWO_FACTOR_FAILED,
+                description__icontains="throttled",
+            ).exists()
+        )
+
+    def test_verify_success_resets_throttle_counter(self):
+        """A valid token clears the failure counter via ``throttle_reset``."""
+        device = self._confirmed_device()
+        self.authenticate_password_only()
+
+        # Simulate a past failure that is no longer within the cooldown window
+        # so the next attempt is allowed but the counter is still > 0.
+        device.throttling_failure_count = 3
+        device.throttling_failure_timestamp = None
+        device.save()
+
+        token = totp(device.bin_key, step=device.step, t0=device.t0, digits=device.digits)
+        response = self.client.post("/2fa/verify/", {"token": f"{token:0{device.digits}d}"})
+        self.assertRedirects(response, "/dashboard/", fetch_redirect_response=False)
+        device.refresh_from_db()
+        self.assertEqual(device.throttling_failure_count, 0)
+
+    def test_setup_throttles_after_repeated_failures(self):
+        """The setup view also enforces throttling against bad tokens."""
+        self.authenticate_password_only()
+        # Hit GET first so the unconfirmed device is created.
+        self.client.get("/2fa/setup/")
+
+        for _ in range(5):
+            self.client.post("/2fa/setup/", {"token": "000000"})
+
+        user = self.get_user()
+        device = TOTPDevice.objects.get(user=user, confirmed=False)
+        self.assertGreater(device.throttling_failure_count, 0)
+
+        response = self.client.post("/2fa/setup/", {"token": "111111"})
+        self.assertContains(response, "Too many invalid verification attempts")
+
+
+@override_settings(AXES_ENABLED=False)
+class LoginLogoutRedirectTests(BaseViewTest):
+    """Regression tests for LOGIN_REDIRECT_URL / LOGOUT_REDIRECT_URL."""
+
+    def test_successful_login_redirects_to_dashboard(self):
+        """A valid login lands on /dashboard/."""
+        response = self.client.post("/", {"username": "testuser", "password": "testpass"})
+        self.assertRedirects(response, "/dashboard/", fetch_redirect_response=False)
+
+    def test_logout_redirects_to_root(self):
+        """Logging out lands on the root login page."""
+        self.authenticate()
+        response = self.client.get("/logout/")
+        self.assertRedirects(response, "/", fetch_redirect_response=False)
