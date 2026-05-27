@@ -7,11 +7,13 @@ from django.db.models import Q
 
 class AuditLogEvent(models.TextChoices):
     LOGIN = "LOGIN", "Login"
+    LOGIN_FAILED = "LOGIN_FAILED", "Login Failed"
     LOGOUT = "LOGOUT", "Logout"
     DELETE = "DELETE", "Delete"
     TAKEDOWN = "TAKEDOWN", "Takedown"
     UNTAKEDOWN = "UNTAKEDOWN", "Untakedown"
     PASSWORD_CHANGE = "PASSWORD_CHANGE", "Password Change"
+    PASSWORD_CHANGE_FAILED = "PASSWORD_CHANGE_FAILED", "Password Change Failed"
     TWO_FACTOR_ENABLED = "TWO_FACTOR_ENABLED", "Two-Factor Enabled"
     TWO_FACTOR_VERIFIED = "TWO_FACTOR_VERIFIED", "Two-Factor Verified"
     TWO_FACTOR_FAILED = "TWO_FACTOR_FAILED", "Two-Factor Failed"
@@ -27,9 +29,13 @@ class AuditLog(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="audit_logs",
+        null=True,
+        blank=True,
     )
-    event = models.CharField(max_length=20, choices=AuditLogEvent.choices)
+    event = models.CharField(max_length=30, choices=AuditLogEvent.choices)
     description = models.TextField(blank=True, null=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=512, blank=True, null=True)
 
     class Meta:
         ordering = ["-created_at"]
