@@ -24,6 +24,7 @@ from web.utils import (
     sanitize_csv_cell,
     takedown_pds_account,
     untakedown_pds_account,
+    update_pds_account_password,
 )
 
 
@@ -272,6 +273,67 @@ class AccountActionViewTests(BaseViewTest):
         response = self.client.get("/accounts/did:plc:123/takedown/")
         self.assertContains(response, "Cancel")
         self.assertContains(response, "/dashboard/")
+
+
+class ResetPasswordActionViewTests(BaseViewTest):
+    """Tests for the reset-password account action."""
+
+    def test_reset_password_get_shows_form(self):
+        """Test that GET renders a password reset form."""
+        self.authenticate()
+        response = self.client.get("/accounts/did:plc:123/reset-password/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Reset Password")
+        self.assertContains(response, 'name="new_password"')
+        self.assertContains(response, 'name="confirm_password"')
+        self.assertContains(response, "did:plc:123")
+
+    @patch("web.utils.requests.post")
+    def test_reset_password_post_success_redirects(self, mock_post: Mock):
+        """Test that a successful POST redirects to the dashboard."""
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+        self.authenticate()
+
+        response = self.client.post(
+            "/accounts/did:plc:123/reset-password/",
+            {"new_password": "newpw1234", "confirm_password": "newpw1234"},
+        )
+
+        self.assertRedirects(response, "/dashboard/")
+        mock_post.assert_called_once_with(
+            "https://localhost/xrpc/com.atproto.admin.updateAccountPassword",
+            auth=("admin", "admin"),
+            json={"did": "did:plc:123", "password": "newpw1234"},
+            timeout=10,
+        )
+
+    @patch("web.utils.requests.post")
+    def test_reset_password_post_creates_audit_log(self, mock_post: Mock):
+        """Test that a successful POST creates a PASSWORD_RESET audit entry."""
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+        self.authenticate()
+
+        self.client.post(
+            "/accounts/did:plc:456/reset-password/",
+            {"new_password": "newpw1234", "confirm_password": "newpw1234"},
+        )
+
+        log = AuditLog.objects.filter(event=AuditLogEvent.PASSWORD_RESET).first()
+        self.assertIsNotNone(log)
+        assert isinstance(log, AuditLog)
+        self.assertEqual(log.description, "User performed reset-password on did:plc:456")
+        assert isinstance(log.user, get_user_model())
+        self.assertEqual(log.user.username, "testuser")
+
+    def test_reset_password_requires_login(self):
+        """Test that the reset-password action requires authentication."""
+        response = self.client.get("/accounts/did:plc:123/reset-password/")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/?next=", response.url)
 
 
 class ChangePasswordViewTests(BaseViewTest):
@@ -692,7 +754,7 @@ class UtilsTests(TestCase):
         mock_response.raise_for_status = Mock()
         mock_post.return_value = mock_response
 
-        result = delete_pds_account("did:plc:123")
+        result = delete_pds_account(RequestFactory().post("/"), "did:plc:123")
 
         self.assertTrue(result)
         mock_post.assert_called_once_with(
@@ -707,7 +769,7 @@ class UtilsTests(TestCase):
         """Test delete_pds_account returns False on request failure."""
         mock_post.side_effect = requests.RequestException("Connection refused")
 
-        result = delete_pds_account("did:plc:123")
+        result = delete_pds_account(RequestFactory().post("/"), "did:plc:123")
 
         self.assertFalse(result)
 
@@ -718,7 +780,7 @@ class UtilsTests(TestCase):
         mock_response.raise_for_status = Mock()
         mock_post.return_value = mock_response
 
-        result = takedown_pds_account("did:plc:123")
+        result = takedown_pds_account(RequestFactory().post("/"), "did:plc:123")
 
         self.assertTrue(result)
         mock_post.assert_called_once()
@@ -738,7 +800,7 @@ class UtilsTests(TestCase):
         """Test takedown_pds_account returns False on request failure."""
         mock_post.side_effect = requests.RequestException("Connection refused")
 
-        result = takedown_pds_account("did:plc:123")
+        result = takedown_pds_account(RequestFactory().post("/"), "did:plc:123")
 
         self.assertFalse(result)
 
@@ -749,7 +811,7 @@ class UtilsTests(TestCase):
         mock_response.raise_for_status = Mock()
         mock_post.return_value = mock_response
 
-        result = untakedown_pds_account("did:plc:123")
+        result = untakedown_pds_account(RequestFactory().post("/"), "did:plc:123")
 
         self.assertTrue(result)
         mock_post.assert_called_once()
@@ -765,9 +827,67 @@ class UtilsTests(TestCase):
         """Test untakedown_pds_account returns False on request failure."""
         mock_post.side_effect = requests.RequestException("Connection refused")
 
-        result = untakedown_pds_account("did:plc:123")
+        result = untakedown_pds_account(RequestFactory().post("/"), "did:plc:123")
 
         self.assertFalse(result)
+
+    @patch("web.utils.requests.post")
+    def test_update_pds_account_password_success(self, mock_post: Mock):
+        """Test update_pds_account_password returns True on success."""
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_post.return_value = mock_response
+
+        request = RequestFactory().post(
+            "/", {"new_password": "secret-pw", "confirm_password": "secret-pw"}
+        )
+        # pylint: disable=protected-access
+        request._messages = Mock()  # type: ignore[attr-defined]
+        result = update_pds_account_password(request, "did:plc:123")
+
+        self.assertTrue(result)
+        mock_post.assert_called_once_with(
+            "https://localhost/xrpc/com.atproto.admin.updateAccountPassword",
+            auth=("admin", "admin"),
+            json={"did": "did:plc:123", "password": "secret-pw"},
+            timeout=10,
+        )
+
+    @patch("web.utils.requests.post")
+    def test_update_pds_account_password_request_exception(self, mock_post: Mock):
+        """Test update_pds_account_password returns False on request failure."""
+        mock_post.side_effect = requests.RequestException("Connection refused")
+
+        request = RequestFactory().post(
+            "/", {"new_password": "secret-pw", "confirm_password": "secret-pw"}
+        )
+        # pylint: disable=protected-access
+        request._messages = Mock()  # type: ignore[attr-defined]
+        result = update_pds_account_password(request, "did:plc:123")
+
+        self.assertFalse(result)
+
+    @patch("web.utils.requests.post")
+    def test_update_pds_account_password_missing_password(self, mock_post: Mock):
+        """Test update_pds_account_password rejects an empty password."""
+        request = RequestFactory().post("/", {"new_password": "", "confirm_password": ""})
+        # pylint: disable=protected-access
+        request._messages = Mock()  # type: ignore[attr-defined]
+        result = update_pds_account_password(request, "did:plc:123")
+
+        self.assertFalse(result)
+        mock_post.assert_not_called()
+
+    @patch("web.utils.requests.post")
+    def test_update_pds_account_password_mismatch(self, mock_post: Mock):
+        """Test update_pds_account_password rejects mismatched passwords."""
+        request = RequestFactory().post("/", {"new_password": "a", "confirm_password": "b"})
+        # pylint: disable=protected-access
+        request._messages = Mock()  # type: ignore[attr-defined]
+        result = update_pds_account_password(request, "did:plc:123")
+
+        self.assertFalse(result)
+        mock_post.assert_not_called()
 
 
 class TwoFactorSetupTests(BaseViewTest):

@@ -36,13 +36,15 @@ from web.utils import (
     sanitize_csv_cell,
     takedown_pds_account,
     untakedown_pds_account,
+    update_pds_account_password,
 )
 
-ACCOUNT_ACTIONS: dict[str, tuple[AuditLogEvent, Callable]] = {
+ACCOUNT_ACTIONS: dict[str, tuple[AuditLogEvent, Callable[[HttpRequest, str], bool]]] = {
     "takedown": (AuditLogEvent.TAKEDOWN, takedown_pds_account),
     "untakedown": (AuditLogEvent.UNTAKEDOWN, untakedown_pds_account),
     "delete": (AuditLogEvent.DELETE, delete_pds_account),
-    "info": (AuditLogEvent.INFO, lambda _: None),
+    "info": (AuditLogEvent.INFO, lambda _request, _did: True),
+    "reset-password": (AuditLogEvent.PASSWORD_RESET, update_pds_account_password),
 }
 
 
@@ -182,7 +184,7 @@ def account_action_view(request: HttpRequest, did: str, action: str) -> HttpResp
     if request.method == "POST":
         assert isinstance(request.user, get_user_model())
         audit_event, handler = ACCOUNT_ACTIONS[action]
-        handler(did)
+        handler(request, did)
 
         record_audit(
             request,

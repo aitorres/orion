@@ -9,7 +9,9 @@ import qrcode
 import qrcode.image.svg
 import requests
 from django.conf import settings
+from django.contrib import messages
 from django.core.cache import cache
+from django.http import HttpRequest
 
 REQUESTS_TIMEOUT_IN_SECONDS: Final[int] = 10
 BATCH_SIZE: Final[int] = 20
@@ -357,7 +359,7 @@ def invalidate_dashboard_cache() -> None:
     cache.delete("orion:gatekeeper:required_dids")
 
 
-def delete_pds_account(did: str) -> bool:
+def delete_pds_account(_request: HttpRequest, did: str) -> bool:
     """Delete a PDS account by DID."""
 
     try:
@@ -376,7 +378,7 @@ def delete_pds_account(did: str) -> bool:
         return False
 
 
-def takedown_pds_account(did: str) -> bool:
+def takedown_pds_account(_request: HttpRequest, did: str) -> bool:
     """Takedown a PDS account by DID."""
 
     try:
@@ -402,7 +404,7 @@ def takedown_pds_account(did: str) -> bool:
         return False
 
 
-def untakedown_pds_account(did: str) -> bool:
+def untakedown_pds_account(_request: HttpRequest, did: str) -> bool:
     """Untakedown a PDS account by DID."""
 
     try:
@@ -423,6 +425,38 @@ def untakedown_pds_account(did: str) -> bool:
         return True
     except requests.RequestException as e:
         logging.exception("Failed to untakedown PDS account with DID %s.", did, exc_info=e)
+        return False
+
+
+def update_pds_account_password(request: HttpRequest, did: str) -> bool:
+    """Reset a PDS account's password using ``new_password`` from the request."""
+
+    new_password = request.POST.get("new_password", "")
+    confirm_password = request.POST.get("confirm_password", "")
+
+    if not new_password:
+        messages.error(request, "New password is required.")
+        return False
+
+    if new_password != confirm_password:
+        messages.error(request, "New passwords do not match.")
+        return False
+
+    try:
+        response = requests.post(
+            f"{settings.PDS_HOSTNAME}/xrpc/com.atproto.admin.updateAccountPassword",
+            auth=("admin", settings.PDS_ADMIN_PASSWORD),
+            json={"did": did, "password": new_password},
+            timeout=REQUESTS_TIMEOUT_IN_SECONDS,
+        )
+        response.raise_for_status()
+        logging.info("Successfully reset password for PDS account with DID %s.", did)
+        return True
+    except requests.RequestException as e:
+        logging.exception(
+            "Failed to reset password for PDS account with DID %s.", did, exc_info=e
+        )
+        messages.error(request, "Failed to reset password on the PDS.")
         return False
 
 

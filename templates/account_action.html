@@ -1,12 +1,14 @@
 {% extends "_base.html" %}
-{% block title %}{% if action == 'info' %}Account Info{% else %}Confirm {{ action|title }}{% endif %}{% endblock %}
+{% block title %}{% if action == 'info' %}Account Info{% elif action == 'reset-password' %}Reset Password{% else %}Confirm {{ action|title }}{% endif %}{% endblock %}
 
 {% block content %}
 <article>
     <header>
-        <h2>{% if action == 'info' %}Account Information{% else %}Confirm {{ action|title }}{% endif %}</h2>
+        <h2>{% if action == 'info' %}Account Information{% elif action == 'reset-password' %}Reset Password{% else %}Confirm {{ action|title }}{% endif %}</h2>
     </header>
-    {% if action != 'info' %}
+    {% if action == 'reset-password' %}
+    <p>Set a new password for the account with DID <code>{{ did }}</code>.</p>
+    {% elif action != 'info' %}
     <p>Are you sure you want to <strong>{{ action }}</strong> the account with DID <code>{{ did }}</code>?</p>
     {% endif %}
     <ul>
@@ -20,6 +22,19 @@
     </ul>
     {% if action == 'info' %}
     <button onclick="location.href='{% url 'dashboard' %}'">Back</button>
+    {% elif action == 'reset-password' %}
+    <p>The user will need to use this new password to log in. This action cannot be undone.</p>
+    <form method="post" action="{% url 'account_action' did action %}">
+        {% csrf_token %}
+        <label for="new_password">New Password
+            <input type="password" id="new_password" name="new_password" autocomplete="new-password" required>
+        </label>
+        <label for="confirm_password">Confirm New Password
+            <input type="password" id="confirm_password" name="confirm_password" autocomplete="new-password" required>
+        </label>
+        <button type="submit">Reset Password</button>
+    </form>
+    <button class="secondary" onclick="location.href='{% url 'dashboard' %}'" >Cancel</button>
     {% else %}
     <p>This action may be irreversible.</p>
     <form method="post" action="{% url 'account_action' did action %}">
