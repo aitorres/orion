@@ -16,6 +16,7 @@ from django.http import (
     JsonResponse,
 )
 from django.shortcuts import redirect, render
+from django_otp import DEVICE_ID_SESSION_KEY
 from django_otp import login as otp_login
 from django_otp import user_has_device
 from django_otp.plugins.otp_totp.models import TOTPDevice
@@ -56,6 +57,10 @@ class OrionLoginView(LoginView):
 
     def form_valid(self, form):
         response = super().form_valid(form)
+
+        # force a new session on login to clear existing 2FA state
+        self.request.session.pop(DEVICE_ID_SESSION_KEY, None)
+
         record_audit(
             self.request,
             user=self.request.user,

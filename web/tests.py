@@ -92,6 +92,26 @@ class LoginViewTests(BaseViewTest):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Sign In")
 
+    def test_login_clears_existing_otp_verification(self):
+        """A successful password login must drop any pre-existing OTP session
+        marker so the user is forced through 2FA verification again.
+        """
+
+        user = self.get_user()
+        self._mark_otp_verified(user)
+        self.assertIn(DEVICE_ID_SESSION_KEY, self.client.session)
+
+        response = self.client.post("/", {"username": "testuser", "password": "testpass"})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn(DEVICE_ID_SESSION_KEY, self.client.session)
+
+        # Hitting a protected page now redirects to the 2FA verify step
+        # rather than rendering the dashboard.
+        dashboard_response = self.client.get("/dashboard/")
+        self.assertEqual(dashboard_response.status_code, 302)
+        self.assertEqual(dashboard_response.url, "/2fa/verify/")
+
 
 class DashboardViewTests(BaseViewTest):
     """Tests for the dashboard view."""
