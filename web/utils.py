@@ -261,15 +261,22 @@ def get_gatekeeper_required_dids(use_cache: bool = True) -> set[str]:
     return result
 
 
-def _format_pds_status(account: dict[str, Any]) -> str:
+def _format_pds_status(account: dict[str, Any], service_pds_list: list[dict[str, Any]]) -> str:
     """Render an account's PDS status from the listRepos payload."""
 
+    current_pds = "unknown PDS"
+    if service_pds_list:
+        service_pds = service_pds_list[0]
+        current_pds = service_pds["serviceEndpoint"].strip("https://")
+
     if account.get("active"):
-        return "Active"
+        return f"Active ({current_pds})"
+
     status = account.get("status")
     if isinstance(status, str):
-        return status.title()
-    return "Unknown"
+        return f"{status.title()} ({current_pds})"
+
+    return f"Unknown ({current_pds})"
 
 
 _APPVIEW_STATUS_LABELS: Final[dict[Any, str]] = {
@@ -363,7 +370,9 @@ def get_enriched_accounts(use_cache: bool = True) -> list[dict[str, Any]]:
         did = account.get("did", "")
         info = info_by_did.get(did, {})
 
-        pds_status = _format_pds_status(account)
+        pds_status = _format_pds_status(
+            account, info.get("didDocument", {}).get("service", {})
+        )
         appview_status = _format_appview_status(info)
         if pds_status == "Deactivated" and appview_status == "Suspended":
             appview_status = "Suspended or Deactivated"
