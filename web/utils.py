@@ -293,8 +293,40 @@ def _build_info_by_did(dids: list[str], use_cache: bool) -> dict[str, dict[str, 
         for info in get_pds_account_batch_infos(batch, use_cache=use_cache):
             did = info.get("did")
             if isinstance(did, str):
+                info["didDocument"] = get_plc_directory_information(did)
                 info_by_did[did] = info
     return info_by_did
+
+
+def get_plc_directory_information(did: str, use_cache: bool = True) -> dict[str, Any]:
+    """Return the fully-resolved DID document from the PLC directory.
+
+    The return object contains PLC information, including handle,
+    verification method, and service (current PDS that serves this DID).
+    """
+
+    if not did:
+        raise ValueError(f"Invalid DID {did}")
+
+    cache_key = f"orion:plc:directory_info:{did}"
+    if use_cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    try:
+        response = requests.get(
+            f"{settings.PLC_DIRECTORY}/{did}",
+            timeout=REQUESTS_TIMEOUT_IN_SECONDS,
+        )
+        response.raise_for_status()
+        did_document = response.json()
+    except requests.RequestException as e:
+        logging.exception("Failed to retrieve DID document from PLC Directory.", exc_info=e)
+        return {}
+
+    cache.set(cache_key, did_document, _cache_ttl())
+    return did_document
 
 
 def get_enriched_accounts(use_cache: bool = True) -> list[dict[str, Any]]:

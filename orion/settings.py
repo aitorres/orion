@@ -238,6 +238,7 @@ if _pds_hostname is None or _pds_admin_password is None:
 
 PDS_HOSTNAME: Final[str] = _pds_hostname
 PDS_ADMIN_PASSWORD: Final[str] = _pds_admin_password
+PLC_DIRECTORY: Final[str] = os.environ.get("ORION_PLC_DIRECTORY", "https://plc.directory")
 
 # AppView endpoint used to resolve app-level account visibility/suspension status.
 APPVIEW_HOSTNAME: Final[str] = os.environ.get(
